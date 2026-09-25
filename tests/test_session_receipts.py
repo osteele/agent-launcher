@@ -352,6 +352,7 @@ class LauncherCardTest(ReceiptTestCase):
         *arguments: str,
         input_tty: bool = True,
         output_tty: bool = True,
+        removed: tuple[str, ...] = (),
         **overrides: str,
     ) -> tuple[Path, subprocess.CompletedProcess[str]]:
         fake = self.bin_dir / harness
@@ -374,6 +375,8 @@ class LauncherCardTest(ReceiptTestCase):
         ):
             environment.pop(marker, None)
         environment.update(overrides)
+        for name in removed:
+            environment.pop(name, None)
         master, slave = os.openpty()
         try:
             result = subprocess.run(
@@ -432,6 +435,47 @@ class LauncherCardTest(ReceiptTestCase):
             check=True,
         )
         self.assertEqual(shell.stdout.strip(), str(pane_card))
+
+    def fake_ps(self, body: str) -> None:
+        ps = self.bin_dir / "ps"
+        ps.write_text(f"#!/bin/sh\n{body}\n")
+        ps.chmod(0o755)
+
+    @unittest.skipUnless(shutil.which("zsh"), "the prompt half of the key requires Zsh")
+    def test_terminal_device_keys_both_sides_alike(self) -> None:
+        """ShellReceipt: without a pane or terminal session, both sides key by tty device."""
+        for ps_output, device in (("pts/3", "/dev/pts/3"), ("ttys003", "/dev/ttys003")):
+            with self.subTest(device=device):
+                self.fake_ps(f"echo ' {ps_output}'")
+                card, _ = self.launch("kimi", removed=("TERM_SESSION_ID",))
+                environment = dict(self.environment)
+                environment.pop("TERM_SESSION_ID", None)
+                environment["AGENT_EPILOGUE_DIR"] = str(card.parent)
+                shell = subprocess.run(
+                    [
+                        "zsh",
+                        "-f",
+                        "-c",
+                        'TTY=$2; source "$1"; print -r -- "$_AGENT_EPILOGUE_FILE"',
+                        "zsh",
+                        str(EPILOGUE_HOOK),
+                        device,
+                    ],
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=True,
+                )
+                prompt_card = Path(shell.stdout.strip())
+                self.assertTrue(prompt_card.exists(), sorted(card.parent.iterdir()))
+                prompt_card.unlink()
+
+    def test_failing_terminal_lookup_still_launches(self) -> None:
+        """ShellReceipt: an unreadable terminal falls back to the default key."""
+        self.fake_ps("exit 1")
+        card, _ = self.launch("kimi", removed=("TERM_SESSION_ID",))
+        self.assertTrue(card.with_name("default.card").exists())
 
     def test_nested_launch_preserves_outer_receipt(self) -> None:
         """InteractiveTopLevelReceiptsOnly: a nested launch cannot replace the outer card."""

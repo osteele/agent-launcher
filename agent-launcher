@@ -526,7 +526,10 @@ if [[ "$NESTED_LAUNCH" == false && "$INTERACTIVE_LAUNCH" == true && "$NAME" != "
     epilogue_key=""
     [[ -n "${HERDR_PANE_ID:-}" ]] && epilogue_key="herdr-${HERDR_PANE_ID}"
     [[ -z "$epilogue_key" ]] && epilogue_key="${TERM_SESSION_ID:-}"
-    [[ -z "$epilogue_key" ]] && epilogue_key="$(ps -o tty= -p $$ 2>/dev/null | tr -d ' /')"
+    # The terminal as a device path below /dev ("pts/3", "ttys003"), which is
+    # what zsh's $TTY holds; ps prints "?" or "??" when there is none. A failing
+    # ps leaves the key empty rather than aborting the launch under set -e.
+    [[ -z "$epilogue_key" ]] && epilogue_key="$(ps -o tty= -p $$ 2>/dev/null | tr -d ' ?' || true)"
     [[ -z "$epilogue_key" ]] && epilogue_key="default"
     epilogue_key="$(printf '%s' "$epilogue_key" | tr -c 'A-Za-z0-9._-' '_')"
     if mkdir -p "$epilogue_dir" 2>/dev/null; then

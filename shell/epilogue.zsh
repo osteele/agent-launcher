@@ -24,7 +24,7 @@ autoload -Uz add-zsh-hook
   local key=""
   [[ -n ${HERDR_PANE_ID:-} ]] && key="herdr-${HERDR_PANE_ID}"
   [[ -z $key ]] && key="${TERM_SESSION_ID:-}"
-  [[ -z $key ]] && key="${TTY:t}"
+  [[ -z $key ]] && key="${TTY#/dev/}"
   [[ -z $key ]] && key=default
   typeset -g _AGENT_EPILOGUE_FILE="${AGENT_EPILOGUE_DIR:-$HOME/.cache/agent-command-guards/epilogue}/${key//[^A-Za-z0-9._-]/_}.card"
 }
