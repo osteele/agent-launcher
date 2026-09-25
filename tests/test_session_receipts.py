@@ -403,6 +403,7 @@ class LauncherCardTest(ReceiptTestCase):
         self.assertIn("status 7", output)
         self.assertRegex(output, r"\d+[smh]")
 
+    @unittest.skipUnless(shutil.which("zsh"), "the prompt half of the key requires Zsh")
     def test_herdr_pane_keys_both_sides_ahead_of_terminal_session(self) -> None:
         """ShellReceipt: panes of a herdr server started from one tab keep separate cards."""
         terminal_card, _ = self.launch("kimi", HERDR_SESSION="main", HERDR_PANE_ID="p7")

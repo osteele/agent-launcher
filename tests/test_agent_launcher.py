@@ -68,7 +68,15 @@ class AgentLauncherTest(unittest.TestCase):
         self.environment.pop("OPENAI_API_KEY", None)
         self.environment.pop("ANTHROPIC_API_KEY", None)
         self.environment.pop("AGENT_LAUNCHER_KEEP_API_KEYS", None)
-        for variable in ("AGENT_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CLAUDECODE", "GEMINI_CLI"):
+        for variable in (
+            "AGENT_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ID",
+            "CODEX_THREAD_ID",
+            "CLAUDECODE",
+            "GEMINI_CLI",
+            "HERDR_SESSION",
+            "HERDR_PANE_ID",
+        ):
             self.environment.pop(variable, None)
         self.install_python()
 
@@ -77,7 +85,9 @@ class AgentLauncherTest(unittest.TestCase):
 
     def install_real(self, name: str) -> Path:
         real = self.real_bin / name
-        real.write_text(REPORT_ENVIRONMENT + f'\nprintf launched >> "{self.tmp / "executed"}"\n')
+        real.write_text(
+            REPORT_ENVIRONMENT + f'\nprintf launched >> "{self.tmp / "executed"}"\n'
+        )
         real.chmod(0o755)
         return real
 
@@ -117,7 +127,9 @@ class AgentLauncherTest(unittest.TestCase):
         self.assertIn(f"args=--profile resume {OMP_RESUME_ID}", result.stdout)
         self.assertNotEqual(self.session_id(result), OMP_RESUME_ID)
 
-    def test_native_resume_after_a_profile_value_selects_the_actual_identifier(self) -> None:
+    def test_native_resume_after_a_profile_value_selects_the_actual_identifier(
+        self,
+    ) -> None:
         """ResumeQueries consumes option values before looking for the native resume marker."""
         self.install_real("codex")
         self.install_agentsview({CODEX_RESUME_ID: "codex"})
@@ -325,7 +337,9 @@ class AgentLauncherTest(unittest.TestCase):
         """SwitchWhenRequestedHarnessHasNoMatch preserves identity and guards."""
         self.install_real("codex")
         self.install_agentsview({CODEX_RESUME_ID: "codex"})
-        result = self.launch("omp", "--resume", f"codex:{CODEX_RESUME_ID}", "prompt text")
+        result = self.launch(
+            "omp", "--resume", f"codex:{CODEX_RESUME_ID}", "prompt text"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"args=resume {CODEX_RESUME_ID} prompt text", result.stdout)
         self.assertEqual(self.session_id(result), CODEX_RESUME_ID)
@@ -473,16 +487,22 @@ class AgentLauncherTest(unittest.TestCase):
         """PrepareResumeModel maps the requested model into the owning harness."""
         self.install_real("omp")
         self.install_agentsview({OMP_RESUME_ID: "omp"})
-        result = self.launch("opencode", "-m", "zai-coding-plan/glm-5.3-flash", "-s", OMP_RESUME_ID)
+        result = self.launch(
+            "opencode", "-m", "zai-coding-plan/glm-5.3-flash", "-s", OMP_RESUME_ID
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"args=--model=zai/glm-5.3-flash --resume {OMP_RESUME_ID}", result.stdout)
+        self.assertIn(
+            f"args=--model=zai/glm-5.3-flash --resume {OMP_RESUME_ID}", result.stdout
+        )
         self.assertNotIn("zai-coding-plan", result.stdout)
 
     def test_switch_refuses_an_unsupported_native_model_unattended(self) -> None:
         """PrepareResumeModel never drops an unsupported requested model."""
         self.install_real("codex")
         self.install_agentsview({CODEX_RESUME_ID: "codex"})
-        result = self.launch("omp", "--model=zai/glm-5.3-flash", "--resume", CODEX_RESUME_ID)
+        result = self.launch(
+            "omp", "--model=zai/glm-5.3-flash", "--resume", CODEX_RESUME_ID
+        )
         self.assertEqual(result.returncode, 2)
         self.assertIn("has no route", result.stderr)
         self.assertNotIn("args=", result.stdout)
@@ -496,7 +516,10 @@ class AgentLauncherTest(unittest.TestCase):
         card.parent.mkdir()
         card.write_bytes(b"outer receipt\n")
         status, output = run_pty(
-            [str(LAUNCHER_DIR / "omp")], self.environment, [], self.tmp / "executed",
+            [str(LAUNCHER_DIR / "omp")],
+            self.environment,
+            [],
+            self.tmp / "executed",
         )
         self.assertEqual(status, 0, output)
         self.assertEqual(card.read_bytes(), b"outer receipt\n")
@@ -517,8 +540,15 @@ class AgentLauncherTest(unittest.TestCase):
         for choice, expected in (("q", 2), ("1", 0)):
             with self.subTest(choice=choice):
                 status, output = run_pty(
-                    [str(LAUNCHER_DIR / "omp"), "--model=zai/glm-5.3-flash", "--resume", CODEX_RESUME_ID],
-                    self.environment, [choice], self.tmp / "executed",
+                    [
+                        str(LAUNCHER_DIR / "omp"),
+                        "--model=zai/glm-5.3-flash",
+                        "--resume",
+                        CODEX_RESUME_ID,
+                    ],
+                    self.environment,
+                    [choice],
+                    self.tmp / "executed",
                 )
                 self.assertEqual(status, expected, output)
                 if choice == "q":
@@ -528,7 +558,9 @@ class AgentLauncherTest(unittest.TestCase):
                     self.assertIn(f"agent_session={CODEX_RESUME_ID}", output)
                     self.assertIn("guards=1", output)
 
-    def test_interactive_cross_harness_selection_sets_actual_receipt_harness(self) -> None:
+    def test_interactive_cross_harness_selection_sets_actual_receipt_harness(
+        self,
+    ) -> None:
         """PromptForCrossHarnessConflict, HarnessOwnership and ReceiptContents share the selection."""
         self.install_real("omp")
         self.install_real("codex")
@@ -540,13 +572,19 @@ class AgentLauncherTest(unittest.TestCase):
         self.environment["AGENT_EPILOGUE_DIR"] = str(self.tmp / "epilogue")
         card = self.tmp / "epilogue" / "resume-choice.card"
         witness = self.tmp / "executed"
-        for choice, owner, native_id in (("q", None, None), ("1", "codex", CODEX_RESUME_ID), ("2", "omp", OMP_RESUME_ID)):
+        for choice, owner, native_id in (
+            ("q", None, None),
+            ("1", "codex", CODEX_RESUME_ID),
+            ("2", "omp", OMP_RESUME_ID),
+        ):
             with self.subTest(choice=choice):
                 witness.unlink(missing_ok=True)
                 card.unlink(missing_ok=True)
                 status, output = run_pty(
                     [str(LAUNCHER_DIR / "omp"), "--resume", "remembered line"],
-                    self.environment, [choice], witness,
+                    self.environment,
+                    [choice],
+                    witness,
                 )
                 self.assertEqual(status, 2 if owner is None else 0, output)
                 if owner is None:
@@ -556,8 +594,16 @@ class AgentLauncherTest(unittest.TestCase):
                     self.assertTrue(witness.exists())
                     self.assertIn(f"agent_session={native_id}", output)
                     receipt = subprocess.run(
-                        [str(REPO / "agent-epilogue"), *card.read_text().splitlines(), "--status", "0"],
-                        capture_output=True, text=True, env=self.environment, timeout=15,
+                        [
+                            str(REPO / "agent-epilogue"),
+                            *card.read_text().splitlines(),
+                            "--status",
+                            "0",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        env=self.environment,
+                        timeout=15,
                     )
                     self.assertEqual(receipt.returncode, 0, receipt.stderr)
                     spelling = "--resume" if owner == "omp" else "resume"
@@ -581,7 +627,9 @@ class AgentLauncherTest(unittest.TestCase):
 
         status, output = run_pty(
             [str(LAUNCHER_DIR / "omp"), "--resume", OMP_RESUME_ID],
-            self.environment, [], self.tmp / "executed",
+            self.environment,
+            [],
+            self.tmp / "executed",
         )
 
         self.assertEqual(status, 0, output)
@@ -597,17 +645,23 @@ class AgentLauncherTest(unittest.TestCase):
         self.assertIn(f"args=-- --resume {OMP_RESUME_ID}", result.stdout)
         self.assertNotEqual(self.session_id(result), OMP_RESUME_ID)
 
-    def test_switch_preserves_argument_boundaries_without_shell_evaluation(self) -> None:
+    def test_switch_preserves_argument_boundaries_without_shell_evaluation(
+        self,
+    ) -> None:
         """LaunchEnvironment: owning-harness translation treats arbitrary argv as data."""
         real = self.real_bin / "codex"
-        real.write_text(f'#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        real.write_text(
+            f"#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n"
+        )
         real.chmod(0o755)
         self.install_agentsview({CODEX_RESUME_ID: "codex"})
         marker = self.tmp / "should-not-exist"
         prompt = f"two lines\n$(touch {marker})"
         result = self.launch("omp", "--resume", CODEX_RESUME_ID, "--", prompt, "")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), ["resume", CODEX_RESUME_ID, "--", prompt, ""])
+        self.assertEqual(
+            json.loads(result.stdout), ["resume", CODEX_RESUME_ID, "--", prompt, ""]
+        )
         self.assertFalse(marker.exists())
 
     def test_a_picker_selector_is_not_treated_as_a_name(self) -> None:
