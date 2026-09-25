@@ -48,6 +48,8 @@ class ReceiptTestCase(unittest.TestCase):
             directory.mkdir(parents=True, exist_ok=True)
         self.environment = dict(os.environ)
         self.environment["HOME"] = str(self.home)
+        for name in ("HERDR_SESSION", "HERDR_PANE_ID"):
+            self.environment.pop(name, None)
         # External lookup must never reach the workstation's live archive.
         self.bin_dir = self.tmp / "bin"
         self.bin_dir.mkdir()
@@ -95,7 +97,9 @@ class ReceiptTestCase(unittest.TestCase):
         self, host_pid: int, session_id: str, name: str = "project-1"
     ) -> None:
         (self.registry / f"{name}-{host_pid}.json").write_text(
-            json.dumps({"pid": host_pid + 1, "parentPid": host_pid, "sessionId": session_id})
+            json.dumps(
+                {"pid": host_pid + 1, "parentPid": host_pid, "sessionId": session_id}
+            )
         )
 
     def write_native_session(self) -> None:
@@ -126,8 +130,13 @@ class ReceiptTestCase(unittest.TestCase):
         )
         fake.chmod(0o755)
         result = subprocess.run(
-            ["bash", "-c", command], env=self.environment, cwd=self.tmp,
-            capture_output=True, text=True, timeout=5, check=True,
+            ["bash", "-c", command],
+            env=self.environment,
+            cwd=self.tmp,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
         )
         return json.loads(result.stdout)
 
@@ -159,7 +168,9 @@ class NameLookupTest(ReceiptTestCase):
     def test_slug_is_used_when_a_record_has_no_display_name(self) -> None:
         digest = hashlib.sha256(b"slug-only").hexdigest()
         (self.store / f"{digest}.json").write_text(json.dumps({"slug": "amber-ember"}))
-        self.assertEqual(self.resolve("--session-id", "slug-only").stdout.strip(), "amber-ember")
+        self.assertEqual(
+            self.resolve("--session-id", "slug-only").stdout.strip(), "amber-ember"
+        )
 
     def test_malformed_record_reads_as_no_name(self) -> None:
         digest = hashlib.sha256(b"broken").hexdigest()
@@ -169,7 +180,9 @@ class NameLookupTest(ReceiptTestCase):
     def test_host_pid_breadcrumb_wins_where_the_launcher_id_misses(self) -> None:
         """The Codex case: agent-mail keyed the name by a thread id the
         launcher never saw, so only the host pid finds it."""
-        self.write_breadcrumb(4242, "codex-thread-id", "Nutritious Cucumber", "2026-09-17T04:00:00.000Z")
+        self.write_breadcrumb(
+            4242, "codex-thread-id", "Nutritious Cucumber", "2026-09-17T04:00:00.000Z"
+        )
         result = self.resolve(
             "--session-id", "launcher-minted-id", "--host-pid", "4242"
         )
@@ -194,7 +207,9 @@ class NameLookupTest(ReceiptTestCase):
         """agent-mail records milliseconds and the launcher does not, and "."
         sorts below "Z" -- comparing the raw strings would reject a breadcrumb
         written in the same second as the launch."""
-        self.write_breadcrumb(4242, "same-second", "Flying Cake", "2026-09-17T04:00:00.630Z")
+        self.write_breadcrumb(
+            4242, "same-second", "Flying Cake", "2026-09-17T04:00:00.630Z"
+        )
         result = self.resolve(
             "--host-pid", "4242", "--not-before", "2026-09-17T04:00:00Z"
         )
@@ -251,17 +266,27 @@ class EpilogueRenderTest(ReceiptTestCase):
         self.write_native_session()
         self.write_name(NATIVE_ID, "Flying Cake")
         result = self.render(
-            "--harness", "omp", "--cwd", "/tmp/my-project",
-            "--session-id", NATIVE_ID, "--status", "0",
+            "--harness",
+            "omp",
+            "--cwd",
+            "/tmp/my-project",
+            "--session-id",
+            NATIVE_ID,
+            "--status",
+            "0",
         )
         output = plain(result.stdout)
         self.assertIn("my-project", output)
         self.assertIn("Flying Cake", output)
-        self.assertEqual(self.resume_arguments(result.stdout, "omp"), ["--resume", "Flying Cake"])
+        self.assertEqual(
+            self.resume_arguments(result.stdout, "omp"), ["--resume", "Flying Cake"]
+        )
 
     def test_unverified_native_shaped_id_has_no_resume_line(self) -> None:
         """IdentitySeparation: UUID shape does not prove native resumability."""
-        result = self.render("--harness", "kimi", "--cwd", "/tmp/p", "--session-id", NATIVE_ID)
+        result = self.render(
+            "--harness", "kimi", "--cwd", "/tmp/p", "--session-id", NATIVE_ID
+        )
         output = plain(result.stdout)
         self.assertIn("(unnamed session)", output)
         self.assertNotIn("resume", output)
@@ -270,7 +295,9 @@ class EpilogueRenderTest(ReceiptTestCase):
         """ShowExitReceipt, IdentitySeparation: exact positive evidence permits ID fallback."""
         self.write_native_session()
         result = self.render("--harness", "omp", "--session-id", NATIVE_ID)
-        self.assertEqual(self.resume_arguments(result.stdout, "omp"), ["--resume", NATIVE_ID])
+        self.assertEqual(
+            self.resume_arguments(result.stdout, "omp"), ["--resume", NATIVE_ID]
+        )
 
     def test_native_id_owned_by_other_harness_is_not_offered(self) -> None:
         """ReceiptContents: evidence for another harness cannot authorize this resume command."""
@@ -293,7 +320,9 @@ class EpilogueRenderTest(ReceiptTestCase):
                 result = self.render(
                     "--harness", harness, "--cwd", "/tmp/p", "--session-id", "abc-123"
                 )
-                self.assertEqual(self.resume_arguments(result.stdout, harness), [flag, name])
+                self.assertEqual(
+                    self.resume_arguments(result.stdout, harness), [flag, name]
+                )
                 self.assertFalse((self.tmp / "injected").exists())
 
     def test_exit_status_becomes_how_it_ended(self) -> None:
@@ -318,8 +347,12 @@ class EpilogueRenderTest(ReceiptTestCase):
 @unittest.skipUnless(os.name == "posix", "receipt launch requires POSIX terminals")
 class LauncherCardTest(ReceiptTestCase):
     def launch(
-        self, harness: str, *arguments: str, input_tty: bool = True,
-        output_tty: bool = True, **overrides: str,
+        self,
+        harness: str,
+        *arguments: str,
+        input_tty: bool = True,
+        output_tty: bool = True,
+        **overrides: str,
     ) -> tuple[Path, subprocess.CompletedProcess[str]]:
         fake = self.bin_dir / harness
         fake.write_text("#!/bin/bash\nexit 0\n")
@@ -332,8 +365,12 @@ class LauncherCardTest(ReceiptTestCase):
         environment["AGENT_EPILOGUE_DIR"] = str(cards)
         environment["TERM_SESSION_ID"] = "w1t1p0_TEST"
         for marker in (
-            "AGENT_COMMAND_GUARDS_ACTIVE", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID",
-            "AGENT_SESSION_ID", "CODEX_THREAD_ID", "GEMINI_CLI",
+            "AGENT_COMMAND_GUARDS_ACTIVE",
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "AGENT_SESSION_ID",
+            "CODEX_THREAD_ID",
+            "GEMINI_CLI",
         ):
             environment.pop(marker, None)
         environment.update(overrides)
@@ -343,8 +380,12 @@ class LauncherCardTest(ReceiptTestCase):
                 [str(link), *arguments],
                 stdin=slave if input_tty else subprocess.DEVNULL,
                 stdout=slave if output_tty else subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True, env=environment,
-                cwd=str(self.tmp), timeout=15, check=False,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=environment,
+                cwd=str(self.tmp),
+                timeout=15,
+                check=False,
             )
         finally:
             os.close(slave)
@@ -362,6 +403,36 @@ class LauncherCardTest(ReceiptTestCase):
         self.assertIn("status 7", output)
         self.assertRegex(output, r"\d+[smh]")
 
+    def test_herdr_pane_keys_both_sides_ahead_of_terminal_session(self) -> None:
+        """ShellReceipt: panes of a herdr server started from one tab keep separate cards."""
+        terminal_card, _ = self.launch("kimi", HERDR_SESSION="main", HERDR_PANE_ID="p7")
+        pane_card = terminal_card.with_name("herdr-main-p7.card")
+        self.assertTrue(pane_card.exists())
+        self.assertFalse(terminal_card.exists())
+        environment = dict(self.environment)
+        environment.update(
+            AGENT_EPILOGUE_DIR=str(pane_card.parent),
+            TERM_SESSION_ID="w1t1p0_TEST",
+            HERDR_SESSION="main",
+            HERDR_PANE_ID="p7",
+        )
+        shell = subprocess.run(
+            [
+                "zsh",
+                "-f",
+                "-c",
+                'source "$1"; print -r -- "$_AGENT_EPILOGUE_FILE"',
+                "zsh",
+                str(EPILOGUE_HOOK),
+            ],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        )
+        self.assertEqual(shell.stdout.strip(), str(pane_card))
+
     def test_nested_launch_preserves_outer_receipt(self) -> None:
         """InteractiveTopLevelReceiptsOnly: a nested launch cannot replace the outer card."""
         card, _ = self.launch("kimi")
@@ -373,15 +444,20 @@ class LauncherCardTest(ReceiptTestCase):
         """InteractiveTopLevelReceiptsOnly: both input and output must be interactive."""
         for input_tty, output_tty in ((False, False), (False, True), (True, False)):
             with self.subTest(input_tty=input_tty, output_tty=output_tty):
-                card, _ = self.launch("kimi", input_tty=input_tty, output_tty=output_tty)
+                card, _ = self.launch(
+                    "kimi", input_tty=input_tty, output_tty=output_tty
+                )
                 self.assertFalse(card.exists())
 
     def test_headless_mode_with_terminal_publishes_no_card(self) -> None:
         """InteractiveTopLevelReceiptsOnly: a PTY does not make headless execution interactive."""
         for harness, arguments in (
-            ("codex", ("exec", "a prompt")), ("omp", ("--print", "a prompt")),
-            ("opencode", ("run", "a prompt")), ("kimi", ("--print", "a prompt")),
-            ("codex", ("review",)), ("omp", ("--mode", "rpc")),
+            ("codex", ("exec", "a prompt")),
+            ("omp", ("--print", "a prompt")),
+            ("opencode", ("run", "a prompt")),
+            ("kimi", ("--print", "a prompt")),
+            ("codex", ("review",)),
+            ("omp", ("--mode", "rpc")),
             ("kimi", ("--help",)),
         ):
             with self.subTest(harness=harness):
@@ -389,7 +465,9 @@ class LauncherCardTest(ReceiptTestCase):
                 self.assertFalse(card.exists())
 
 
-@unittest.skipUnless(os.name == "posix" and shutil.which("zsh"), "requires interactive Zsh")
+@unittest.skipUnless(
+    os.name == "posix" and shutil.which("zsh"), "requires interactive Zsh"
+)
 class ZshPromptReceiptTest(ReceiptTestCase):
     """Exercise Zsh's actual precmd dispatch, not ordinary function calls."""
 
@@ -401,16 +479,23 @@ class ZshPromptReceiptTest(ReceiptTestCase):
         self.cards.mkdir()
         self.card = self.cards / "receipt-test.card"
         self.environment.update(
-            AGENT_EPILOGUE_DIR=str(self.cards), TERM_SESSION_ID="receipt-test",
-            TERM="dumb", ZDOTDIR=str(self.home),
+            AGENT_EPILOGUE_DIR=str(self.cards),
+            TERM_SESSION_ID="receipt-test",
+            TERM="dumb",
+            ZDOTDIR=str(self.home),
         )
         self.master, slave = os.openpty()
         settings = termios.tcgetattr(slave)
         settings[3] &= ~termios.ECHO
         termios.tcsetattr(slave, termios.TCSANOW, settings)
         self.shell = subprocess.Popen(
-            ["zsh", "-dfi"], stdin=slave, stdout=slave, stderr=slave,
-            env=self.environment, cwd=self.tmp, start_new_session=True,
+            ["zsh", "-dfi"],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            env=self.environment,
+            cwd=self.tmp,
+            start_new_session=True,
         )
         os.close(slave)
         self.addCleanup(self.close_shell)
@@ -436,7 +521,9 @@ class ZshPromptReceiptTest(ReceiptTestCase):
         output = bytearray()
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            ready, _, _ = select.select([self.master], [], [], max(0, deadline - time.monotonic()))
+            ready, _, _ = select.select(
+                [self.master], [], [], max(0, deadline - time.monotonic())
+            )
             if not ready:
                 break
             try:
@@ -458,7 +545,7 @@ class ZshPromptReceiptTest(ReceiptTestCase):
         """ReceiptAtMostOncePerRun, ReceiptContents: preserve $?/pipestatus across real prompts."""
         self.command(
             'observe() { print -r -- "OBSERVER:$?:${(j:,:)pipestatus}"; }; '
-            'precmd_functions=(observe _agent_epilogue)'
+            "precmd_functions=(observe _agent_epilogue)"
         )
         self.publish_card()
         first = self.command("(exit 7) | (exit 0)")

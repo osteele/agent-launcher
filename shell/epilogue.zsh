@@ -14,11 +14,16 @@
 # Re-sourcing moves this hook last without registering it twice.
 autoload -Uz add-zsh-hook
 
-# Keyed by TERM_SESSION_ID, the one identifier the launcher and an interactive
-# shell agree on. Keep this derivation identical to the one in agent-launcher.
+# Keyed by the herdr pane, else TERM_SESSION_ID: identifiers the launcher and
+# an interactive shell agree on. The pane comes first because a herdr server
+# started from a terminal tab passes that tab's TERM_SESSION_ID to every pane;
+# the herdr session name qualifies it in case pane IDs repeat across sessions.
+# Keep this derivation identical to the one in agent-launcher.
 # Computed once: a $(...) here would fork on every prompt.
 () {
-  local key="${TERM_SESSION_ID:-}"
+  local key=""
+  [[ -n ${HERDR_PANE_ID:-} ]] && key="herdr-${HERDR_SESSION:-}-${HERDR_PANE_ID}"
+  [[ -z $key ]] && key="${TERM_SESSION_ID:-}"
   [[ -z $key ]] && key="${TTY:t}"
   [[ -z $key ]] && key=default
   typeset -g _AGENT_EPILOGUE_FILE="${AGENT_EPILOGUE_DIR:-$HOME/.cache/agent-command-guards/epilogue}/${key//[^A-Za-z0-9._-]/_}.card"

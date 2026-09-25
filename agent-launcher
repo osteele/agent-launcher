@@ -522,7 +522,10 @@ fi
 # Claude's separate wrapper publishes its own SessionEnd receipt.
 if [[ "$NESTED_LAUNCH" == false && "$INTERACTIVE_LAUNCH" == true && "$NAME" != "claude" ]]; then
     epilogue_dir="${AGENT_EPILOGUE_DIR:-$HOME/.cache/agent-command-guards/epilogue}"
-    epilogue_key="${TERM_SESSION_ID:-}"
+    # Keep this derivation identical to the one in shell/epilogue.zsh.
+    epilogue_key=""
+    [[ -n "${HERDR_PANE_ID:-}" ]] && epilogue_key="herdr-${HERDR_SESSION:-}-${HERDR_PANE_ID}"
+    [[ -z "$epilogue_key" ]] && epilogue_key="${TERM_SESSION_ID:-}"
     [[ -z "$epilogue_key" ]] && epilogue_key="$(ps -o tty= -p $$ 2>/dev/null | tr -d ' /')"
     [[ -z "$epilogue_key" ]] && epilogue_key="default"
     epilogue_key="$(printf '%s' "$epilogue_key" | tr -c 'A-Za-z0-9._-' '_')"
