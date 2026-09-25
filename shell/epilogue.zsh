@@ -16,13 +16,13 @@ autoload -Uz add-zsh-hook
 
 # Keyed by the herdr pane, else TERM_SESSION_ID: identifiers the launcher and
 # an interactive shell agree on. The pane comes first because a herdr server
-# started from a terminal tab passes that tab's TERM_SESSION_ID to every pane;
-# the herdr session name qualifies it in case pane IDs repeat across sessions.
+# started from a terminal tab passes that tab's TERM_SESSION_ID to every pane.
+# herdr pane IDs already carry their workspace (w1:p3).
 # Keep this derivation identical to the one in agent-launcher.
 # Computed once: a $(...) here would fork on every prompt.
 () {
   local key=""
-  [[ -n ${HERDR_PANE_ID:-} ]] && key="herdr-${HERDR_SESSION:-}-${HERDR_PANE_ID}"
+  [[ -n ${HERDR_PANE_ID:-} ]] && key="herdr-${HERDR_PANE_ID}"
   [[ -z $key ]] && key="${TERM_SESSION_ID:-}"
   [[ -z $key ]] && key="${TTY:t}"
   [[ -z $key ]] && key=default

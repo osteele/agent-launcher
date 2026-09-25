@@ -48,7 +48,7 @@ class ReceiptTestCase(unittest.TestCase):
             directory.mkdir(parents=True, exist_ok=True)
         self.environment = dict(os.environ)
         self.environment["HOME"] = str(self.home)
-        for name in ("HERDR_SESSION", "HERDR_PANE_ID"):
+        for name in ("HERDR_PANE_ID",):
             self.environment.pop(name, None)
         # External lookup must never reach the workstation's live archive.
         self.bin_dir = self.tmp / "bin"
@@ -406,16 +406,15 @@ class LauncherCardTest(ReceiptTestCase):
     @unittest.skipUnless(shutil.which("zsh"), "the prompt half of the key requires Zsh")
     def test_herdr_pane_keys_both_sides_ahead_of_terminal_session(self) -> None:
         """ShellReceipt: panes of a herdr server started from one tab keep separate cards."""
-        terminal_card, _ = self.launch("kimi", HERDR_SESSION="main", HERDR_PANE_ID="p7")
-        pane_card = terminal_card.with_name("herdr-main-p7.card")
+        terminal_card, _ = self.launch("kimi", HERDR_PANE_ID="w1:p7")
+        pane_card = terminal_card.with_name("herdr-w1_p7.card")
         self.assertTrue(pane_card.exists())
         self.assertFalse(terminal_card.exists())
         environment = dict(self.environment)
         environment.update(
             AGENT_EPILOGUE_DIR=str(pane_card.parent),
             TERM_SESSION_ID="w1t1p0_TEST",
-            HERDR_SESSION="main",
-            HERDR_PANE_ID="p7",
+            HERDR_PANE_ID="w1:p7",
         )
         shell = subprocess.run(
             [

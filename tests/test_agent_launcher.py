@@ -74,7 +74,6 @@ class AgentLauncherTest(unittest.TestCase):
             "CODEX_THREAD_ID",
             "CLAUDECODE",
             "GEMINI_CLI",
-            "HERDR_SESSION",
             "HERDR_PANE_ID",
         ):
             self.environment.pop(variable, None)
