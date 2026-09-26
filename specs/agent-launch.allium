@@ -58,6 +58,12 @@ external entity CompletedRun {
     actual_harness: Harness
     session_name: String?
     verified_native_id: String?
+    -- The session name, when every session recorded under it verifies to one
+    -- native conversation owned by actual_harness, and that conversation is
+    -- verified_native_id whenever that is present. A name recorded against a
+    -- launcher-minted ID never verifies. Verification shares one deadline on
+    -- the prompt path; a lookup that cannot finish in time is unverified.
+    resumable_name: String?
     elapsed: Duration
     exit_status: Integer
 }
@@ -290,7 +296,7 @@ rule ShowExitReceipt {
     requires: not exists Receipt{run}
     ensures: Receipt.created(
         run: run,
-        resume_target: run.session_name ?? run.verified_native_id
+        resume_target: run.resumable_name ?? run.verified_native_id
     )
 }
 
@@ -379,8 +385,9 @@ surface AgentLauncher {
         -- At the next supported interactive shell prompt, show the project,
         -- actual harness, elapsed time, shell-observed exit outcome, and session
         -- name when available. A normal process exit does not prove task completion.
-        -- Prefer the name for the resume command; otherwise use the verified native
-        -- resume ID. With neither, omit the resume command. Receipt rendering must
+        -- Prefer the name for the resume command, but only a name that resumes this
+        -- run's own conversation in the actual harness; otherwise use the verified
+        -- native resume ID. With neither, omit the resume command. Receipt rendering must
         -- preserve the shell's observed exit status and target the owning harness.
         -- Baseline: the installed receipt surface is Zsh; Bash has no receipt hook.
 

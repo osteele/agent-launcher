@@ -292,10 +292,14 @@ shell prompt prints a receipt naming it by its agent-mail name:
 └ resume  kimi --resume Flying\ Cake
 ```
 
-The resume command prefers the session's readable name. Without a name, it
-offers a native ID only after verifying that the owning harness recognizes
-that exact identity. A launcher bookkeeping ID does not establish this.
-If neither identity is available, the receipt has no resume command.
+The resume command prefers the session's readable name, but only a name that
+leads back to this conversation: every session recorded under it must verify as
+one native conversation owned by the harness that ran, and that conversation must
+be this run's own when its ID is known. Otherwise the receipt offers the native ID,
+again only after the owning harness recognizes that exact identity. A launcher
+bookkeeping ID establishes neither, so an agent whose name is keyed on one shows
+its name without offering it for resume. If nothing verifies within two seconds,
+the receipt has no resume command.
 
 Receipts describe the project, actual harness, elapsed time, and process exit
 status. A successful process exit does not claim that its task was completed.
@@ -405,7 +409,10 @@ when that variable names its parent process. This covers aliases that expand to
 
 A `git push` an agent runs itself has a different parent and is still refused.
 So is Git run through `jj util exec`: the `jj` shadow does not mark `util`
-commands and removes any marker it inherits. The marker is a way to recognize
+commands and removes any marker it inherits. The check is on the parent alone,
+so any Git that a marked jj starts directly passes: a pager, editor, or diff,
+merge, or fix tool configured as `git`, and a user alias that expands to
+`util exec`, which the shadow cannot see through. The marker is a way to recognize
 jj's own subprocesses, not a security boundary; a process that sets it by hand
 can get past the `git` shadow, as it could by calling `/usr/bin/git` directly.
 

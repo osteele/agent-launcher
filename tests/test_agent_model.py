@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -20,7 +21,9 @@ OTHER_ID = "11111111-1111-4111-8111-111111111111"
 
 
 def run_pty(
-    arguments: list[str], environment: dict[str, str], answers: list[str],
+    arguments: list[str],
+    environment: dict[str, str],
+    answers: list[str],
     witness: Path,
 ) -> tuple[int, str]:
     """Answer real terminal prompts with a bounded deadline and no child before selection."""
@@ -30,7 +33,9 @@ def run_pty(
     import time
 
     master, slave = pty.openpty()
-    process = subprocess.Popen(arguments, stdin=slave, stdout=slave, stderr=slave, env=environment)
+    process = subprocess.Popen(
+        arguments, stdin=slave, stdout=slave, stderr=slave, env=environment
+    )
     os.close(slave)
     transcript = b""
     answered = 0
@@ -50,7 +55,9 @@ def run_pty(
                 prompts = transcript.count(b"Choose a number, or q to cancel:")
                 if prompts > answered and answered < len(answers):
                     if witness.exists():
-                        raise AssertionError("harness executed before selection completed")
+                        raise AssertionError(
+                            "harness executed before selection completed"
+                        )
                     os.write(master, (answers[answered] + "\n").encode())
                     answered += 1
             elif process.poll() is not None:
@@ -59,14 +66,15 @@ def run_pty(
             raise AssertionError(f"terminal interaction timed out: {transcript!r}")
         status = process.wait(timeout=3)
         if answered != len(answers):
-            raise AssertionError(f"expected {len(answers)} prompts, observed {answered}: {transcript!r}")
+            raise AssertionError(
+                f"expected {len(answers)} prompts, observed {answered}: {transcript!r}"
+            )
         return status, transcript.decode(errors="replace")
     finally:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=3)
         os.close(master)
-
 
 
 class AgentModelTest(unittest.TestCase):
@@ -80,7 +88,11 @@ class AgentModelTest(unittest.TestCase):
         self.environment = dict(os.environ)
         self.environment["HOME"] = str(self.home)
         self.environment.pop("XDG_CONFIG_HOME", None)
-        for variable in ("AGENT_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"):
+        for variable in (
+            "AGENT_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ID",
+            "CODEX_THREAD_ID",
+        ):
             self.environment.pop(variable, None)
         self.environment["PATH"] = f"{self.bin_dir}:{os.defpath}"
 
@@ -100,13 +112,15 @@ class AgentModelTest(unittest.TestCase):
 
     def install_recorder(self, command: str) -> None:
         path = self.bin_dir / command
-        path.write_text(f'#!/bin/sh\nprintf "%s\\n" "$0" "$@"\nprintf launched >> "{self.tmp / "executed"}"\n')
+        path.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$0" "$@"\nprintf launched >> "{self.tmp / "executed"}"\n'
+        )
         path.chmod(0o755)
 
     def install_agentsview(self, agent: str) -> None:
         path = self.bin_dir / "agentsview"
         path.write_text(
-            f"#!/bin/sh\nprintf '%s\\n' '{{\"id\":\"{SESSION_ID}\",\"agent\":\"{agent}\"}}'\n"
+            f'#!/bin/sh\nprintf \'%s\\n\' \'{{"id":"{SESSION_ID}","agent":"{agent}"}}\'\n'
         )
         path.chmod(0o755)
 
@@ -137,7 +151,6 @@ class AgentModelTest(unittest.TestCase):
             timeout=30,
         )
 
-
     def test_native_harnesses_carry_their_own_flag_spellings(self) -> None:
         """LaunchNewConversation translates configured routes and native-harness aliases."""
         defaults = """version = 1
@@ -167,7 +180,11 @@ model = "provider/selected-model"
         for harness, invocation in expected.items():
             with self.subTest(harness=harness):
                 result = self.run_with_defaults(
-                    defaults, "resolve", "selected", "--harness", harness,
+                    defaults,
+                    "resolve",
+                    "selected",
+                    "--harness",
+                    harness,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), invocation)
@@ -186,8 +203,7 @@ model = "provider/selected-model"
             (
                 "glm",
                 "own",
-                "opencode -m zai-coding-plan/glm-5.3-flash "
-                f"--session {session_id}",
+                f"opencode -m zai-coding-plan/glm-5.3-flash --session {session_id}",
             ),
             (
                 "codex",
@@ -197,7 +213,16 @@ model = "provider/selected-model"
         )
         for model, harness, invocation in cases:
             with self.subTest(harness=harness):
-                owner = {"claude": "claude", "codex": "codex", "kimi": "kimi", "glm": "opencode"}[model] if harness == "own" else harness
+                owner = (
+                    {
+                        "claude": "claude",
+                        "codex": "codex",
+                        "kimi": "kimi",
+                        "glm": "opencode",
+                    }[model]
+                    if harness == "own"
+                    else harness
+                )
                 self.install_agentsview_router({session_id: owner})
                 result = self.run_model(
                     "resolve", model, "--harness", harness, "--resume", session_id
@@ -207,10 +232,16 @@ model = "provider/selected-model"
 
     def test_native_id_shape_does_not_claim_ownership_during_an_outage(self) -> None:
         """TryExactNativeIdWhenLookupUnavailable uses the invocation harness."""
-        for session_id in ("session_5730bec7-38ff-436c-9124-c1e1ad910662", "ses_fa56499a4ffeUGPrn6w4JSed3K"):
+        for session_id in (
+            "session_5730bec7-38ff-436c-9124-c1e1ad910662",
+            "ses_fa56499a4ffeUGPrn6w4JSed3K",
+        ):
             result = self.run_model("resolve", "codex", "--resume", session_id)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), f"omp --model=openai-codex/gpt-6-astra --resume {session_id}")
+            self.assertEqual(
+                result.stdout.strip(),
+                f"omp --model=openai-codex/gpt-6-astra --resume {session_id}",
+            )
             self.assertIn("Lookup unavailable", result.stderr)
 
     def test_agentsview_session_ids_are_normalized_for_native_harnesses(self) -> None:
@@ -259,11 +290,16 @@ model = "provider/selected-model"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), f"codex resume {SESSION_ID}")
 
-    def test_unknown_native_id_uses_the_configured_harness_when_lookup_is_unavailable(self) -> None:
+    def test_unknown_native_id_uses_the_configured_harness_when_lookup_is_unavailable(
+        self,
+    ) -> None:
         """TryExactNativeIdWhenLookupUnavailable does not infer a fresh conversation."""
         result = self.run_model("resolve", "codex", "--resume", SESSION_ID)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), f"omp --model=openai-codex/gpt-6-astra --resume {SESSION_ID}")
+        self.assertEqual(
+            result.stdout.strip(),
+            f"omp --model=openai-codex/gpt-6-astra --resume {SESSION_ID}",
+        )
 
     def test_explicit_harness_wins_without_changing_config(self) -> None:
         self.assertEqual(
@@ -427,7 +463,12 @@ model = "provider/selected-model"
         listed = json.dumps(
             {
                 "sessions": [
-                    {"id": canonical, "started_at": started, "cwd": cwd, "agent": canonical.split(":", 1)[0]}
+                    {
+                        "id": canonical,
+                        "started_at": started,
+                        "cwd": cwd,
+                        "agent": canonical.split(":", 1)[0],
+                    }
                     for canonical, started, cwd in (indexed or [])
                 ],
                 "total": len(indexed or []),
@@ -435,7 +476,12 @@ model = "provider/selected-model"
         )
         metadata = {
             session_id: json.dumps(
-                {"id": session_id, "agent": agent, "project": "p", "started_at": "2026-09-01T00:00:00Z"}
+                {
+                    "id": session_id,
+                    "agent": agent,
+                    "project": "p",
+                    "started_at": "2026-09-01T00:00:00Z",
+                }
             )
             for session_id, agent in (sessions or {}).items()
         }
@@ -455,7 +501,7 @@ model = "provider/selected-model"
         )
         script = ["#!/bin/sh"]
         if witness is not None:
-            script.append(f'printf \'%s\\n\' "$*" >> {witness}')
+            script.append(f"printf '%s\\n' \"$*\" >> {witness}")
         script.append('case "$2" in')
         script.append("  get)")
         script.append('    case "$3" in')
@@ -529,7 +575,9 @@ model = "provider/selected-model"
         # one the user can actually resume with the harness they named.
         opencode_session = "11111111-1111-4111-8111-111111111111"
         kimi_session = "22222222-2222-4222-8222-222222222222"
-        self.write_session_name(opencode_session, "Noble Ember", "2026-08-01T00:00:00.000Z")
+        self.write_session_name(
+            opencode_session, "Noble Ember", "2026-08-01T00:00:00.000Z"
+        )
         self.write_session_name(kimi_session, "Noble Ember", "2026-09-01T00:00:00.000Z")
         self.install_agentsview_router(
             {opencode_session: "opencode", kimi_session: "kimi"}
@@ -631,15 +679,19 @@ model = "provider/selected-model"
     # the case -- what makes it unresumable is that no harness store holds it.
     LAUNCHER_ID = "EE1E8456-295B-4BE5-AB37-06D3FC268E8C"
 
-    def test_name_recorded_against_launcher_id_is_not_joined_by_time_or_directory(self) -> None:
+    def test_name_recorded_against_launcher_id_is_not_joined_by_time_or_directory(
+        self,
+    ) -> None:
         """IdentitySeparation: even a unique close-by session is not exact identity."""
         self.write_session_name(
             self.LAUNCHER_ID, "Gifted Bowl", assigned_at="2026-09-18T00:40:01.720Z"
         )
         self.write_announced(self.LAUNCHER_ID, "/w/typeset-viewer")
-        self.install_agentsview_router(indexed=[
-            (f"omp:{SESSION_ID}", "2026-09-18T00:40:01.244Z", "/w/typeset-viewer"),
-        ])
+        self.install_agentsview_router(
+            indexed=[
+                (f"omp:{SESSION_ID}", "2026-09-18T00:40:01.244Z", "/w/typeset-viewer"),
+            ]
+        )
         result = self.run_model("resolve-session", "Gifted Bowl", "--agent", "omp")
         self.assertEqual(result.returncode, 3)
         self.assertEqual(result.stdout, "")
@@ -697,7 +749,9 @@ model = "provider/selected-model"
             with self.subTest(record=record):
                 path.write_text(f"#!/bin/sh\nprintf '%s' '{json.dumps(record)}'\n")
                 path.chmod(0o755)
-                result = self.run_model("verify-session", SESSION_ID, "--agent", "codex")
+                result = self.run_model(
+                    "verify-session", SESSION_ID, "--agent", "codex"
+                )
                 self.assertEqual(result.returncode, 3, result.stderr)
                 self.assertEqual(result.stdout, "")
 
@@ -707,8 +761,96 @@ model = "provider/selected-model"
             with self.subTest(installed=installed):
                 if installed:
                     self.install_agentsview_router()
-                result = self.run_model("verify-session", SESSION_ID, "--agent", "codex")
+                result = self.run_model(
+                    "verify-session", SESSION_ID, "--agent", "codex"
+                )
                 self.assertEqual(result.returncode, 3, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    # receipt-target decides what an exit receipt offers to resume. A name is
+    # offered only when it resumes the card's own conversation.
+
+    MINTED_ID = "22222222-2222-4222-8222-222222222222"
+
+    def receipt_target(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return self.run_model("receipt-target", "--agent", "codex", *arguments)
+
+    def test_receipt_target_offers_a_name_that_verifies_to_the_card_id(self) -> None:
+        self.install_agentsview_router({SESSION_ID: "codex"})
+        self.write_session_name(SESSION_ID, "Efficient Deer")
+        result = self.receipt_target("--id", SESSION_ID, "--name", "Efficient Deer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "Efficient Deer\n")
+
+    def test_receipt_target_rejects_a_name_keyed_on_a_minted_id(self) -> None:
+        """A name recorded against a launcher-minted id resumes nothing, so the id is offered."""
+        self.install_agentsview_router({SESSION_ID: "codex"})
+        self.write_session_name(self.MINTED_ID, "Efficient Deer")
+        result = self.receipt_target("--id", SESSION_ID, "--name", "Efficient Deer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, f"{SESSION_ID}\n")
+
+    def test_receipt_target_rejects_a_name_with_any_unverified_record(self) -> None:
+        """The launcher might pick the minted record; one native record is not enough."""
+        self.install_agentsview_router({SESSION_ID: "codex"})
+        self.write_session_name(SESSION_ID, "Efficient Deer")
+        self.write_session_name(
+            self.MINTED_ID, "Efficient Deer", assigned_at="2026-09-02T00:00:00.000Z"
+        )
+        result = self.receipt_target("--id", SESSION_ID, "--name", "Efficient Deer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, f"{SESSION_ID}\n")
+
+    def test_receipt_target_rejects_a_name_owned_by_another_harness(self) -> None:
+        self.install_agentsview_router({SESSION_ID: "omp"})
+        self.write_session_name(SESSION_ID, "Efficient Deer")
+        result = self.receipt_target("--id", SESSION_ID, "--name", "Efficient Deer")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_receipt_target_rejects_an_ambiguous_name(self) -> None:
+        self.install_agentsview_router({SESSION_ID: "codex", OTHER_ID: "codex"})
+        self.write_session_name(SESSION_ID, "Efficient Deer")
+        self.write_session_name(
+            OTHER_ID, "Efficient Deer", assigned_at="2026-09-02T00:00:00.000Z"
+        )
+        result = self.receipt_target("--id", SESSION_ID, "--name", "Efficient Deer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, f"{SESSION_ID}\n")
+
+    def test_receipt_target_rejects_a_name_for_a_different_conversation(self) -> None:
+        self.install_agentsview_router({SESSION_ID: "codex", OTHER_ID: "codex"})
+        self.write_session_name(OTHER_ID, "Efficient Deer")
+        result = self.receipt_target("--id", SESSION_ID, "--name", "Efficient Deer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, f"{SESSION_ID}\n")
+
+    def test_receipt_target_offers_a_verified_name_without_a_card_id(self) -> None:
+        self.install_agentsview_router({SESSION_ID: "codex"})
+        self.write_session_name(SESSION_ID, "Efficient Deer")
+        result = self.receipt_target("--name", "Efficient Deer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "Efficient Deer\n")
+
+    def test_receipt_target_gives_up_at_its_deadline(self) -> None:
+        """The receipt renders at the prompt, so a slow index yields no target, quickly."""
+        path = self.bin_dir / "agentsview"
+        path.write_text("#!/bin/sh\nsleep 5\n")
+        path.chmod(0o755)
+        self.write_session_name(SESSION_ID, "Efficient Deer")
+        started = time.monotonic()
+        result = self.receipt_target(
+            "--id", SESSION_ID, "--name", "Efficient Deer", "--timeout", "0.5"
+        )
+        self.assertLess(time.monotonic() - started, 4)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_receipt_target_rejects_malformed_requests(self) -> None:
+        for arguments in (("--timeout", "soon"), ("--agent", "nonesuch")):
+            with self.subTest(arguments=arguments):
+                result = self.receipt_target(*arguments)
+                self.assertEqual(result.returncode, 2)
                 self.assertEqual(result.stdout, "")
 
     def test_unavailable_phrase_lookup_is_distinct_from_a_miss(self) -> None:
@@ -723,12 +865,14 @@ model = "provider/selected-model"
     def test_search_selects_newest_and_reports_all_distinct_alternatives(self) -> None:
         """SelectNewestWithoutHarnessPreference/ResumeSelectedConversation deduplicate results."""
         third = "33333333-3333-4333-8333-333333333333"
-        self.install_agentsview_router(found=[
-            (f"omp:{OTHER_ID}", "2026-09-02T12:00:00Z"),
-            (f"codex:{SESSION_ID}", "2026-09-03T12:00:00Z"),
-            (f"codex:{SESSION_ID}", "2026-09-01T12:00:00Z"),
-            (f"omp:{third}", "2026-09-02T20:00:00+09:00"),
-        ])
+        self.install_agentsview_router(
+            found=[
+                (f"omp:{OTHER_ID}", "2026-09-02T12:00:00Z"),
+                (f"codex:{SESSION_ID}", "2026-09-03T12:00:00Z"),
+                (f"codex:{SESSION_ID}", "2026-09-01T12:00:00Z"),
+                (f"omp:{third}", "2026-09-02T20:00:00+09:00"),
+            ]
+        )
         result = self.run_model("resolve", "codex", "--resume", "remembered line")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), f"codex resume {SESSION_ID}")
@@ -736,62 +880,96 @@ model = "provider/selected-model"
         self.assertIn(third, result.stderr)
         self.assertIn("3 sessions", result.stderr)
 
-    def test_unattended_conflict_prefers_requested_harness_and_reports_foreign_match(self) -> None:
+    def test_unattended_conflict_prefers_requested_harness_and_reports_foreign_match(
+        self,
+    ) -> None:
         """PreferRequestedHarness includes cross-harness alternatives in the report."""
-        self.install_agentsview_router(found=[
-            (f"codex:{SESSION_ID}", "2026-09-03T00:00:00Z"),
-            (f"omp:{OTHER_ID}", "2026-09-02T00:00:00Z"),
-        ])
-        result = self.run_model("resolve", "codex", "--harness", "omp", "--resume", "remembered line")
+        self.install_agentsview_router(
+            found=[
+                (f"codex:{SESSION_ID}", "2026-09-03T00:00:00Z"),
+                (f"omp:{OTHER_ID}", "2026-09-02T00:00:00Z"),
+            ]
+        )
+        result = self.run_model(
+            "resolve", "codex", "--harness", "omp", "--resume", "remembered line"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), f"omp --model=openai-codex/gpt-6-astra --resume {OTHER_ID}")
+        self.assertEqual(
+            result.stdout.strip(),
+            f"omp --model=openai-codex/gpt-6-astra --resume {OTHER_ID}",
+        )
         self.assertIn(SESSION_ID, result.stderr)
 
     def test_explicit_harness_without_match_switches_to_owner(self) -> None:
         """SwitchWhenRequestedHarnessHasNoMatch overrides the explicit invocation harness."""
         self.install_agentsview_router({SESSION_ID: "codex"})
-        result = self.run_model("resolve", "codex", "--harness", "omp", "--resume", SESSION_ID)
+        result = self.run_model(
+            "resolve", "codex", "--harness", "omp", "--resume", SESSION_ID
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), f"codex resume {SESSION_ID}")
 
     def test_model_route_is_checked_on_the_selected_harness(self) -> None:
         """PrepareResumeModel validates the owner, not a discarded invocation harness."""
         self.install_agentsview_router({SESSION_ID: "omp"})
-        result = self.run_model("resolve", "glm", "--harness", "codex", "--resume", SESSION_ID)
+        result = self.run_model(
+            "resolve", "glm", "--harness", "codex", "--resume", SESSION_ID
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), f"omp --model=zai/glm-5.3-flash --resume {SESSION_ID}")
+        self.assertEqual(
+            result.stdout.strip(),
+            f"omp --model=zai/glm-5.3-flash --resume {SESSION_ID}",
+        )
 
     def test_unsupported_model_without_switch_is_rejected(self) -> None:
         """PrepareResumeModel's unchanged-harness branch also refuses missing routes."""
         self.install_agentsview_router({SESSION_ID: "codex"})
         self.install_recorder("codex")
-        result = self.run_model("launch", "glm", "--harness", "codex", "--resume", SESSION_ID)
+        result = self.run_model(
+            "launch", "glm", "--harness", "codex", "--resume", SESSION_ID
+        )
         self.assertEqual(result.returncode, 2)
         self.assertIn("has no route", result.stderr)
         self.assertFalse((self.tmp / "executed").exists())
 
     @unittest.skipIf(os.name == "nt", "terminal choice tests require a POSIX PTY")
-    def test_interactive_newest_selection_without_conflict_does_not_prompt(self) -> None:
+    def test_interactive_newest_selection_without_conflict_does_not_prompt(
+        self,
+    ) -> None:
         """SelectNewestWithoutHarnessPreference/PreferRequestedHarness do not prompt unnecessarily."""
-        self.install_agentsview_router(found=[
-            (f"codex:{SESSION_ID}", "2026-09-03T00:00:00Z"),
-            (f"omp:{OTHER_ID}", "2026-09-02T00:00:00Z"),
-        ])
+        self.install_agentsview_router(
+            found=[
+                (f"codex:{SESSION_ID}", "2026-09-03T00:00:00Z"),
+                (f"omp:{OTHER_ID}", "2026-09-02T00:00:00Z"),
+            ]
+        )
         self.install_recorder("codex")
         witness = self.tmp / "executed"
         for preference in ([], ["--harness", "codex"]):
             with self.subTest(preference=preference):
                 witness.unlink(missing_ok=True)
                 status, output = run_pty(
-                    [sys.executable, str(AGENT_MODEL), "launch", "codex", *preference, "--resume", "remembered line"],
-                    self.environment, [], witness,
+                    [
+                        sys.executable,
+                        str(AGENT_MODEL),
+                        "launch",
+                        "codex",
+                        *preference,
+                        "--resume",
+                        "remembered line",
+                    ],
+                    self.environment,
+                    [],
+                    witness,
                 )
                 self.assertEqual(status, 0, output)
                 self.assertTrue(witness.exists())
                 self.assertIn(f"\r\nresume\r\n{SESSION_ID}\r\n", output)
                 self.assertIn(OTHER_ID, output)
 
-    def test_unsupported_model_after_switch_never_uses_a_default_unattended(self) -> None:
+    def test_unsupported_model_after_switch_never_uses_a_default_unattended(
+        self,
+    ) -> None:
         """PrepareResumeModel rejects a model with no configured route after switching."""
         self.install_agentsview_router({SESSION_ID: "codex"})
         self.install_recorder("codex")
@@ -813,19 +991,36 @@ model = "provider/selected-model"
     @unittest.skipIf(os.name == "nt", "terminal choice tests require a POSIX PTY")
     def test_interactive_cross_harness_choice_and_cancel(self) -> None:
         """PromptForCrossHarnessConflict/SelectPromptedConversation/CancelConversationSelection."""
-        self.install_agentsview_router(found=[
-            (f"codex:{SESSION_ID}", "2026-09-03T00:00:00Z"),
-            (f"omp:{OTHER_ID}", "2026-09-02T00:00:00Z"),
-        ])
+        self.install_agentsview_router(
+            found=[
+                (f"codex:{SESSION_ID}", "2026-09-03T00:00:00Z"),
+                (f"omp:{OTHER_ID}", "2026-09-02T00:00:00Z"),
+            ]
+        )
         self.install_recorder("codex")
         self.install_recorder("omp")
         witness = self.tmp / "executed"
-        for answers, expected in ((["q"], None), (["9", "1"], SESSION_ID), (["2"], OTHER_ID)):
+        for answers, expected in (
+            (["q"], None),
+            (["9", "1"], SESSION_ID),
+            (["2"], OTHER_ID),
+        ):
             with self.subTest(answers=answers):
                 witness.unlink(missing_ok=True)
                 status, output = run_pty(
-                    [sys.executable, str(AGENT_MODEL), "launch", "codex", "--harness", "omp", "--resume", "remembered line"],
-                    self.environment, answers, witness,
+                    [
+                        sys.executable,
+                        str(AGENT_MODEL),
+                        "launch",
+                        "codex",
+                        "--harness",
+                        "omp",
+                        "--resume",
+                        "remembered line",
+                    ],
+                    self.environment,
+                    answers,
+                    witness,
                 )
                 self.assertEqual(status, 2 if expected is None else 0, output)
                 if expected is None:
@@ -844,8 +1039,17 @@ model = "provider/selected-model"
             with self.subTest(answers=answers):
                 witness.unlink(missing_ok=True)
                 status, output = run_pty(
-                    [sys.executable, str(AGENT_MODEL), "launch", "glm", "--resume", SESSION_ID],
-                    self.environment, answers, witness,
+                    [
+                        sys.executable,
+                        str(AGENT_MODEL),
+                        "launch",
+                        "glm",
+                        "--resume",
+                        SESSION_ID,
+                    ],
+                    self.environment,
+                    answers,
+                    witness,
                 )
                 self.assertEqual(status, status_expected, output)
                 self.assertIn("glm", output)

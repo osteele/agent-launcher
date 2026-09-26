@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from collections.abc import Iterable
 from datetime import datetime
@@ -575,7 +576,16 @@ class Resolution(NamedTuple):
     conclusive: bool
 
 
-def exact_session(query: str) -> Resolution:
+# A real AgentsView miss takes about 16 s on this machine. A shorter launch
+# timeout turns every miss into "lookup unavailable".
+EXACT_LOOKUP_TIMEOUT = 30.0
+
+# The exit receipt renders synchronously at the next shell prompt, so every
+# lookup it makes shares this deadline.
+RECEIPT_DEADLINE = 2.0
+
+
+def exact_session(query: str, timeout: float = EXACT_LOOKUP_TIMEOUT) -> Resolution:
     """Positive local evidence first, then one exact supported CLI lookup."""
     native_id, _ = normalize_resume_id(query)
     if not NATIVE_ID_PATTERN.fullmatch(native_id):
@@ -583,7 +593,7 @@ def exact_session(query: str) -> Resolution:
     harness = local_store_harness(native_id)
     if harness is not None:
         return Resolution([SessionMatch(native_id, harness, "", f"{harness}:{native_id}")], True)
-    record, answered = _agentsview_query(["session", "get", native_id])
+    record, answered = _agentsview_query(["session", "get", native_id], timeout=timeout)
     match = metadata_match(record, native_id)
     if match is not None:
         return Resolution([match], True)
@@ -802,6 +812,60 @@ def command_verify_session(arguments: list[str]) -> int:
     return 0
 
 
+def receipt_target_arguments(arguments: list[str]) -> tuple[str, str, str, float]:
+    options = {"--agent": "", "--id": "", "--name": "", "--timeout": str(RECEIPT_DEADLINE)}
+    iterator = iter(arguments)
+    for argument in iterator:
+        flag, equals, value = argument.partition("=")
+        if flag not in options:
+            raise ConfigError(f"receipt-target: unexpected argument {argument!r}")
+        options[flag] = value if equals else next(iterator, "")
+    if options["--agent"] not in HARNESS_RESUME_ARGUMENTS:
+        raise ConfigError("receipt-target requires --agent HARNESS")
+    try:
+        timeout = float(options["--timeout"])
+    except ValueError as error:
+        raise ConfigError("--timeout requires a number of seconds") from error
+    return options["--agent"], options["--id"], options["--name"], timeout
+
+
+def command_receipt_target(arguments: list[str]) -> int:
+    """Print the resume target an exit receipt may offer; 3 when none verifies.
+
+    The name is offered only when every session recorded under it verifies to
+    one native conversation owned by AGENT, and that conversation is the card's
+    own when the card's id verifies. A name recorded against a launcher-minted
+    id fails the first test: the launcher would resume it to a different
+    conversation, or to none. Otherwise the verified native id is offered.
+    Lookups share one deadline; one that cannot finish is unverified.
+    """
+    agent, session_id, name, timeout = receipt_target_arguments(arguments)
+    deadline = time.monotonic() + timeout
+
+    def verified(query: str) -> str | None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        resolution = exact_session(query, timeout=remaining)
+        if len(resolution.matches) != 1 or resolution.matches[0].harness != agent:
+            return None
+        return resolution.matches[0].session_id
+
+    card_id = None
+    native_id, prefix = normalize_resume_id(session_id)
+    if NATIVE_ID_PATTERN.fullmatch(native_id) and prefix in (None, agent):
+        card_id = verified(session_id)
+    if name.strip():
+        named = {verified(candidate.session_id) for candidate in sessions_named(name)}
+        if len(named) == 1 and None not in named and card_id in (None, *named):
+            print(name)
+            return 0
+    if card_id is not None:
+        print(card_id)
+        return 0
+    return 3
+
+
 def command_resolve_session(arguments: list[str]) -> int:
     """Three lines on success; 3 definitive miss; 4 unavailable; 2 invalid/cancelled."""
     query, agent = session_cli_arguments(arguments)
@@ -919,6 +983,7 @@ def print_usage(commands: dict[str, Command], file: object = sys.stdout) -> None
   agent-model resolve MODEL [--harness HARNESS | -h HARNESS] [--resume [SESSION]] [ARG ...]
   agent-model resolve-session QUERY [--agent AGENT]
   agent-model verify-session ID --agent HARNESS
+  agent-model receipt-target --agent HARNESS [--id ID] [--name NAME] [--timeout SECS]
   agent-model default list
   agent-model default get MODEL
   agent-model default set MODEL HARNESS
@@ -1043,6 +1108,8 @@ def main(arguments: list[str]) -> int:
         return command_resolve_session(rest)
     if command == "verify-session":
         return command_verify_session(rest)
+    if command == "receipt-target":
+        return command_receipt_target(rest)
     if command == "prepare-resume":
         return command_prepare_resume(commands, rest)
     if command == "config":

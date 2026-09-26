@@ -102,8 +102,11 @@ printf '%s┌%s %s%s%s %s·%s %s\n' \
     "$C_RAIL" "$C_RESET" "$C_BOLD" "$project" "$C_RESET" "$C_DIM" "$C_RESET" "$subject"
 printf '%s│%s %s%s%s\n' "$C_RAIL" "$C_RESET" "$C_DIM" "$facts" "$C_RESET"
 
-# A readable name is preferred. The card's id may instead be bookkeeping, so
-# offer it only after an exact native-identity and harness ownership check.
+# Offer a resume only for a target the launcher will resolve to this
+# conversation. A name is preferred, but agent-mail may have keyed it on a
+# launcher-minted id that no harness knows, so it must verify to exactly one
+# native session owned by this harness; otherwise the card's id is offered if
+# it verifies. This runs at the prompt, so receipt-target bounds its lookups.
 resume_flag=""
 case "$harness" in
     kimi|omp)  resume_flag="--resume" ;;
@@ -112,15 +115,15 @@ case "$harness" in
     agy)       resume_flag="--conversation" ;;
 esac
 
-resume_target="$name"
-if [[ -z "$resume_target" && -n "$session_id" && -n "$resume_flag" ]]; then
-    verified="$("$REPO_DIR/launchers/agent-model" verify-session "$session_id" --agent "$harness" 2>/dev/null)" || verified=""
-    if [[ "$verified" == "$session_id"$'\n'"$harness" ]]; then
-        resume_target="$session_id"
-    fi
+resume_target=""
+if [[ -n "$resume_flag" && ( -n "$name" || -n "$session_id" ) ]]; then
+    target_query=(--agent "$harness")
+    [[ -n "$session_id" ]] && target_query+=(--id "$session_id")
+    [[ -n "$name" ]] && target_query+=(--name "$name")
+    resume_target="$("$REPO_DIR/launchers/agent-model" receipt-target "${target_query[@]}" 2>/dev/null)" || resume_target=""
 fi
 
-if [[ -n "$resume_target" && -n "$resume_flag" ]]; then
+if [[ -n "$resume_target" ]]; then
     # %q is shell syntax, not decorative quotes: names can contain quotes,
     # substitutions or other metacharacters that must remain literal.
     printf '%s└%s %sresume%s  %s %s %q\n' \

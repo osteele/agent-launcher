@@ -107,6 +107,13 @@ class ReceiptTestCase(unittest.TestCase):
         directory.mkdir(parents=True, exist_ok=True)
         (directory / f"2026-09-23T00-00-00-000Z_{NATIVE_ID}.jsonl").write_text("{}\n")
 
+    def install_index(self, harness: str) -> None:
+        """An AgentsView that attributes NATIVE_ID to HARNESS."""
+        record = json.dumps({"id": NATIVE_ID, "agent": harness})
+        agentsview = self.bin_dir / "agentsview"
+        agentsview.write_text(f"#!/bin/sh\nprintf '%s' '{record}'\n")
+        agentsview.chmod(0o755)
+
     def resolve(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(AGENT_MAIL_NAME), *arguments],
@@ -308,7 +315,7 @@ class EpilogueRenderTest(ReceiptTestCase):
     def test_resume_spelling_follows_the_harness(self) -> None:
         """ReceiptContents: displayed commands preserve literal names and owning syntax."""
         name = "Flying 'Cake' \"$(touch injected)\" `echo nope` $HOME ; *"
-        self.write_name("abc-123", name)
+        self.write_name(NATIVE_ID, name)
         for harness, flag in (
             ("kimi", "--resume"),
             ("omp", "--resume"),
@@ -317,13 +324,24 @@ class EpilogueRenderTest(ReceiptTestCase):
             ("agy", "--conversation"),
         ):
             with self.subTest(harness=harness):
+                self.install_index(harness)
                 result = self.render(
-                    "--harness", harness, "--cwd", "/tmp/p", "--session-id", "abc-123"
+                    "--harness", harness, "--cwd", "/tmp/p", "--session-id", NATIVE_ID
                 )
                 self.assertEqual(
                     self.resume_arguments(result.stdout, harness), [flag, name]
                 )
                 self.assertFalse((self.tmp / "injected").exists())
+
+    def test_name_recorded_against_a_minted_id_is_not_offered(self) -> None:
+        """ShowExitReceipt: a name the index cannot tie to this harness's conversation resumes nothing."""
+        self.write_name(NATIVE_ID, "Flying Cake")
+        result = self.render(
+            "--harness", "kimi", "--cwd", "/tmp/p", "--session-id", NATIVE_ID
+        )
+        output = plain(result.stdout)
+        self.assertIn("Flying Cake", output)
+        self.assertNotIn("resume", output)
 
     def test_exit_status_becomes_how_it_ended(self) -> None:
         """ReceiptContents: report process outcome, never claim task completion."""
