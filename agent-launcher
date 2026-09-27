@@ -327,6 +327,21 @@ if [[ -t 0 && -t 1 ]]; then
                 INTERACTIVE_LAUNCH=false
                 break
                 ;;
+            # omp's named subcommands are control operations -- auth, models,
+            # config, maintenance, headless one-shots -- and run no agent
+            # session; a bare invocation or message arguments does. `join` and
+            # `stream` participate in live sessions and keep the receipt.
+            omp:acp|omp:agents|omp:auth-broker|omp:auth-gateway|omp:bench|\
+            omp:browser-relay|omp:cleanse|omp:clip|omp:collab|omp:commit|\
+            omp:completions|omp:compress|omp:config|omp:dry-balance|omp:find|\
+            omp:gallery|omp:gc|omp:git|omp:grep|omp:grievances|omp:if-bench|\
+            omp:images|omp:install|omp:login|omp:models|omp:play|omp:plugin|\
+            omp:ps|omp:read|omp:render|omp:say|omp:search|omp:setup|omp:share|\
+            omp:shell|omp:skill|omp:ssh|omp:stats|omp:tiny-models|omp:token|\
+            omp:toks|omp:ttsr|omp:update|omp:usage|omp:worktree)
+                INTERACTIVE_LAUNCH=false
+                break
+                ;;
             codex:exec|codex:e|opencode:run|omp:--print|omp:-p|omp:--print=*|\
             kimi:--print|kimi:-p|kimi:--print=*|agy:--print|agy:-p|agy:--print=*)
                 INTERACTIVE_LAUNCH=false

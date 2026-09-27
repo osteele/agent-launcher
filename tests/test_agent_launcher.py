@@ -608,6 +608,43 @@ class AgentLauncherTest(unittest.TestCase):
                     spelling = "--resume" if owner == "omp" else "resume"
                     self.assertIn(f"{owner} {spelling} {native_id}", receipt.stdout)
 
+    def test_omp_control_subcommands_leave_no_receipt(self) -> None:
+        """InteractiveTopLevelReceiptsOnly: omp subcommands are control operations, not sessions."""
+        self.install_real("omp")
+        self.environment["TERM_SESSION_ID"] = "omp-control"
+        card = self.tmp / "epilogue" / "omp-control.card"
+        witness = self.tmp / "executed"
+        for arguments in (
+            ("auth-broker", "login", "openai-codex", "--via=studio"),
+            ("update",),
+            ("token", "anthropic"),
+            ("models",),
+        ):
+            with self.subTest(arguments=arguments):
+                witness.unlink(missing_ok=True)
+                card.unlink(missing_ok=True)
+                status, output = run_pty(
+                    [str(LAUNCHER_DIR / "omp"), *arguments],
+                    self.environment,
+                    [],
+                    witness,
+                )
+                self.assertEqual(status, 0, output)
+                self.assertTrue(witness.exists(), output)
+                self.assertFalse(card.exists(), output)
+        # A session launch keeps the receipt. Message arguments are not one of
+        # omp's named subcommands, so this stays an interactive launch.
+        witness.unlink(missing_ok=True)
+        card.unlink(missing_ok=True)
+        status, output = run_pty(
+            [str(LAUNCHER_DIR / "omp"), "fix the flaky launcher test"],
+            self.environment,
+            [],
+            witness,
+        )
+        self.assertEqual(status, 0, output)
+        self.assertTrue(card.exists(), output)
+
     def test_switch_to_claude_keeps_native_identity(self) -> None:
         """IdentitySeparation holds when the owning harness is the external Claude wrapper."""
         self.install_real("claude")

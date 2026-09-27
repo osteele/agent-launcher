@@ -305,8 +305,9 @@ Receipts describe the project, actual harness, elapsed time, and process exit
 status. A successful process exit does not claim that its task was completed.
 The shell consumes each card once and preserves the command and pipeline statuses.
 
-Both input and output must be terminals. Headless, diagnostic, and nested
-launches write no card, so they cannot overwrite an outer interactive session's
+Both input and output must be terminals. Headless, diagnostic, nested, and
+control-subcommand launches (`omp auth-broker`, `codex login`, `omp models`)
+write no card, so they cannot overwrite an outer interactive session's
 receipt. Claude Code's separate wrapper owns its receipt, including when a
 resume request switches to Claude.
 
