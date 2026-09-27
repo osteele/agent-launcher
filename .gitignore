@@ -3,4 +3,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+# CLAUDE.md is developer-local; the global git ignore covers it too
+CLAUDE.md
 *.bak
