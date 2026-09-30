@@ -376,13 +376,22 @@ translations below are supported, while every unclassified Git command is
 refused with a reminder to use `jj`. Commands outside jj repositories continue
 to use Git normally.
 
-Allowlisted read-oriented commands and read-only branch inspection get real jj
-state: the wrapper first asks jj to snapshot and synchronize the co-located
-working copy. jj keeps Git's `HEAD` detached at the working-copy parent, so
-`git log` and `git status` describe the repository as jj sees it rather than
-stale Git state, without creating a synthetic jj bookmark. Mutating branch
-forms and commands such as `git checkout`, `git reset`, and `git clean` are
-refused instead of falling through to Git.
+A Git command is allowed when it works correctly in a co-located repository:
+it mutates nothing, and it either reads no state jj could have left stale or
+reads that state only after jj synchronizes it.
+
+Read-oriented commands such as `git log`, `git status`, and read-only branch
+inspection get real jj state: the wrapper first asks jj to snapshot and
+synchronize the co-located working copy. jj keeps Git's `HEAD` detached at the
+working-copy parent, so `git log` and `git status` describe the repository as jj
+sees it rather than stale Git state, without creating a synthetic jj bookmark.
+
+`git remote` inspection (bare, `-v`, `show`, `get-url`) and `git version` run
+directly, without that synchronization: remotes live in `.git/config`, which jj
+reads and writes itself, so Git's view of them is never stale.
+
+Mutating branch and remote forms and commands such as `git checkout`,
+`git reset`, and `git clean` are refused instead of falling through to Git.
 A synchronization failure prevents the Git read from running against stale state.
 
 `git add` succeeds without staging; jj tracks the working copy. `git commit`
