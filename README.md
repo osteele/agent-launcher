@@ -387,8 +387,8 @@ A synchronization failure prevents the Git read from running against stale state
 
 `git add` succeeds without staging; jj tracks the working copy. `git commit`
 maps to `jj commit`, while `git commit --amend` describes the current jj change.
-Git-only commit flags are omitted, and message text remains literal even when
-it spells an option.
+Supply `-m` for either form to avoid opening an editor. Git-only commit flags
+are omitted, and message text remains literal even when it spells an option.
 
 `git worktree` add, list, remove, and prune map to the corresponding `jj
 workspace` operations. Removal resolves the exact registered workspace path and
@@ -407,6 +407,14 @@ shadow passes a command straight to Git, without snapshotting or refusing, only
 when that variable names its parent process. This covers aliases that expand to
 `jj git push`, since the shadow marks every jj command rather than parsing for
 `git`.
+
+The `jj` shadow refuses commands that would open an editor or interactive UI,
+including `commit` without a message, `split` without a message and filesets,
+and `squash` without a message when both descriptions are nonempty or the
+source revset selects multiple commits. It checks arguments at the executable
+boundary, so the refusal also applies in agent hosts without a pre-tool hook.
+Pass `-m`, use `squash -u`, or specify a non-interactive alternative. Call the
+real jj binary explicitly when an interactive editor is intentional.
 
 A `git push` an agent runs itself has a different parent and is still refused.
 So is Git run through `jj util exec`: the `jj` shadow does not mark `util`
