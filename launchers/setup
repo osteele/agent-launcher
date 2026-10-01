@@ -14,6 +14,7 @@ REPO_DIR="$(cd "$LAUNCHER_DIR/.." && pwd)"
 LAUNCHER_TARGET="$REPO_DIR/agent-launcher"
 SHADOW_DIR="$REPO_DIR/shadows"
 EPILOGUE_ZSH="$REPO_DIR/shell/epilogue.zsh"
+PATH_ORDER_ZSH="$REPO_DIR/shell/path-order.zsh"
 CONFIG_DIR="$HOME/.config/agent-launchers"
 ENV_FILE="$CONFIG_DIR/env"
 BIN_DIR="${AGENT_LAUNCHER_BIN_DIR:-$HOME/bin}"
@@ -158,10 +159,12 @@ if [[ ! -x "$LAUNCHER_DIR/agent-model" ]]; then
     printf 'Error: %s/agent-model is missing or not executable\n' "$LAUNCHER_DIR" >&2
     exit 1
 fi
-if [[ ! -r "$EPILOGUE_ZSH" ]]; then
-    printf 'Error: %s is missing\n' "$EPILOGUE_ZSH" >&2
-    exit 1
-fi
+for zsh_file in "$EPILOGUE_ZSH" "$PATH_ORDER_ZSH"; do
+    if [[ ! -r "$zsh_file" ]]; then
+        printf 'Error: %s is missing\n' "$zsh_file" >&2
+        exit 1
+    fi
+done
 
 if $DRY_RUN; then
     printf 'Would create %s and prepend %s to PATH\n' "$ENV_FILE" "$LAUNCHER_DIR"
@@ -234,6 +237,13 @@ unset -f agent_guards_restore
 # run after a prompt's status capture without displacing it.
 if [ -n "\${ZSH_VERSION:-}" ] && [ -r "$EPILOGUE_ZSH" ]; then
     . "$EPILOGUE_ZSH"
+fi
+
+# Version managers that hook the prompt (mise activate) prepend themselves again
+# after the rc files finish; this precmd/chpwd hook keeps the launchers and the
+# guards in front of them. Zsh only, like the reader above.
+if [ -n "\${ZSH_VERSION:-}" ] && [ -r "$PATH_ORDER_ZSH" ]; then
+    . "$PATH_ORDER_ZSH"
 fi
 EOF
     printf 'Generated %s\n' "$ENV_FILE"

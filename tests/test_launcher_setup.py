@@ -299,6 +299,75 @@ class GeneratedEnvTest(unittest.TestCase):
                 self.assertTrue(first_line.startswith(f"{LAUNCHER_DIR}:"))
                 self.assertNotIn(str(SHADOWS), first_line)
 
+    def run_zsh_startup(
+        self, guards: str | None, *, trigger: str
+    ) -> subprocess.CompletedProcess[str]:
+        # Reproduce the rc order: .zshenv sources the env file, .zshrc then
+        # activates a version manager whose hook prepends its own directory,
+        # and .zshrc sources the env file again last. `trigger` is what the
+        # interactive shell does next: show a prompt, or change directory.
+        environment = {"HOME": str(self.home), "PATH": "/usr/bin:/bin"}
+        if guards is not None:
+            environment["AGENT_COMMAND_GUARDS_DIR"] = guards
+            environment["PATH"] = f"{guards}:/usr/bin:/bin"
+        manager = self.home / "manager-bin"
+        manager.mkdir(exist_ok=True)
+        fake_omp = manager / "omp"
+        fake_omp.write_text("#!/bin/sh\n")
+        fake_omp.chmod(0o755)
+        script = f"""
+. "{self.env_file}"
+autoload -Uz add-zsh-hook
+_manager_hook() {{ path=("{manager}" ${{path:#{manager}}}); }}
+add-zsh-hook precmd _manager_hook
+add-zsh-hook chpwd _manager_hook
+. "{self.env_file}"
+{trigger}
+print -r -- "$PATH"
+print -r -- "$(whence -p omp)"
+print -r -- "${{(j: :)precmd_functions}}"
+"""
+        return subprocess.run(
+            ["/bin/zsh", "-f", "-c", script],
+            capture_output=True,
+            check=False,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=30,
+        )
+
+    def test_zsh_keeps_the_launcher_ahead_of_a_prompt_hook_manager(self) -> None:
+        # mise activate prepends its tool directories at every prompt and cd;
+        # without the hook a mise-installed omp resolves ahead of the launcher.
+        triggers = {
+            "prompt": "for f in $precmd_functions; do $f; done",
+            "cd": "cd / && for f in $chpwd_functions; do $f; done",
+        }
+        for name, trigger in triggers.items():
+            with self.subTest(trigger=name):
+                result = self.run_zsh_startup(None, trigger=trigger)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                path_line, omp, hooks = result.stdout.splitlines()
+                self.assertTrue(path_line.startswith(f"{LAUNCHER_DIR}:"), path_line)
+                self.assertEqual(path_line.count(str(LAUNCHER_DIR)), 1)
+                self.assertEqual(omp, str(LAUNCHER_DIR / "omp"))
+                self.assertNotIn(str(SHADOWS), path_line)
+                self.assertEqual(hooks.split().count("_agent_path_order"), 1)
+                order = hooks.split()
+                self.assertGreater(
+                    order.index("_agent_path_order"), order.index("_manager_hook")
+                )
+
+    def test_zsh_keeps_the_guards_first_in_an_agent_session(self) -> None:
+        result = self.run_zsh_startup(
+            str(SHADOWS), trigger="for f in $precmd_functions; do $f; done"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path_line = result.stdout.splitlines()[0]
+        self.assertTrue(path_line.startswith(f"{SHADOWS}:{LAUNCHER_DIR}:"), path_line)
+        self.assertEqual(path_line.count(str(SHADOWS)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
