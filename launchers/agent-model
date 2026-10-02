@@ -639,6 +639,11 @@ def argument_takes_value(harness: str, argument: str) -> bool:
         "--resume", "-r", "--session", "-s", "-S", "--conversation", "--mode",
     }:
         return True
+    if harness == "agy":
+        return argument in {
+            "--add-dir", "--agent", "--effort", "--input-format", "--json-schema",
+            "--log-file", "--output-format", "--print-timeout", "--project",
+        }
     return harness == "codex" and argument in {
         "-p", "-i", "--image", "--enable", "--disable", "--remote",
         "--remote-auth-token-env", "--local-provider", "--sandbox", "--add-dir",
@@ -675,6 +680,14 @@ def headless_invocation(harness: str, arguments: list[str]) -> bool:
             }
         if harness == "opencode" and not argument.startswith("-"):
             return argument == "run"
+        if harness == "agy" and not argument.startswith("-"):
+            return argument in {
+                "agent", "agents", "changelog", "help", "install", "mcp",
+                "mic-serve", "models", "plugin", "plugins", "remote-control",
+                "update",
+            }
+        if harness == "agy" and (argument == "--prompt" or argument.startswith("--prompt=")):
+            return True
         if harness in {"omp", "kimi", "agy", "claude"} and (
             argument in {"-p", "--print"} or argument.startswith("--print=")
         ):

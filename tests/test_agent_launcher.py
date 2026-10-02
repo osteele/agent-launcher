@@ -645,6 +645,45 @@ class AgentLauncherTest(unittest.TestCase):
         self.assertEqual(status, 0, output)
         self.assertTrue(card.exists(), output)
 
+    def test_agy_control_subcommands_leave_no_receipt(self) -> None:
+        """InteractiveTopLevelReceiptsOnly: agy subcommands and --prompt run no session."""
+        self.install_real("agy")
+        self.environment["TERM_SESSION_ID"] = "agy-control"
+        card = self.tmp / "epilogue" / "agy-control.card"
+        witness = self.tmp / "executed"
+        for arguments in (
+            ("update",),
+            ("models",),
+            ("mcp", "list"),
+            ("--effort", "high", "changelog"),
+            ("--prompt", "summarize the diff"),
+        ):
+            with self.subTest(arguments=arguments):
+                witness.unlink(missing_ok=True)
+                card.unlink(missing_ok=True)
+                status, output = run_pty(
+                    [str(LAUNCHER_DIR / "agy"), *arguments],
+                    self.environment,
+                    [],
+                    witness,
+                )
+                self.assertEqual(status, 0, output)
+                self.assertTrue(witness.exists(), output)
+                self.assertFalse(card.exists(), output)
+        # A subcommand name inside a prompt is message text, not a subcommand.
+        for arguments in (("fix", "update"), ("--effort", "high")):
+            with self.subTest(arguments=arguments):
+                witness.unlink(missing_ok=True)
+                card.unlink(missing_ok=True)
+                status, output = run_pty(
+                    [str(LAUNCHER_DIR / "agy"), *arguments],
+                    self.environment,
+                    [],
+                    witness,
+                )
+                self.assertEqual(status, 0, output)
+                self.assertTrue(card.exists(), output)
+
     def test_switch_to_claude_keeps_native_identity(self) -> None:
         """IdentitySeparation holds when the owning harness is the external Claude wrapper."""
         self.install_real("claude")

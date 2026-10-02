@@ -258,6 +258,12 @@ argument_takes_value() {
                 return 0 ;;
         esac
     fi
+    if [[ "$NAME" == "agy" ]]; then
+        case "$1" in
+            --add-dir|--agent|--effort|--input-format|--json-schema|--log-file|--output-format|--print-timeout|--project)
+                return 0 ;;
+        esac
+    fi
     return 1
 }
 
@@ -342,8 +348,17 @@ if [[ -t 0 && -t 1 ]]; then
                 INTERACTIVE_LAUNCH=false
                 break
                 ;;
+            # Every agy subcommand is a control operation; a session starts
+            # only from a bare invocation or a prompt.
+            agy:agent|agy:agents|agy:changelog|agy:help|agy:install|agy:mcp|\
+            agy:mic-serve|agy:models|agy:plugin|agy:plugins|\
+            agy:remote-control|agy:update)
+                INTERACTIVE_LAUNCH=false
+                break
+                ;;
             codex:exec|codex:e|opencode:run|omp:--print|omp:-p|omp:--print=*|\
-            kimi:--print|kimi:-p|kimi:--print=*|agy:--print|agy:-p|agy:--print=*)
+            kimi:--print|kimi:-p|kimi:--print=*|agy:--print|agy:-p|agy:--print=*|\
+            agy:--prompt|agy:--prompt=*)
                 INTERACTIVE_LAUNCH=false
                 break
                 ;;
@@ -353,7 +368,7 @@ if [[ -t 0 && -t 1 ]]; then
             [[ "$NAME" == "omp" && "$launch_argument" == "--mode" ]] && launch_mode_value=true
             continue
         fi
-        if [[ "$NAME" == "codex" || "$NAME" == "opencode" ]]; then
+        if [[ "$NAME" == "codex" || "$NAME" == "opencode" || "$NAME" == "agy" ]]; then
             if [[ "$launch_argument" != -* ]]; then break; fi
         fi
     done
