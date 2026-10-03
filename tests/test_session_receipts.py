@@ -629,6 +629,21 @@ class ZshPromptReceiptTest(ReceiptTestCase):
         self.assertIn("AFTER:9:0,9", output)
         self.assertNotIn("receipt-project", output)
 
+    def test_receipt_clears_stale_screen_below_the_cursor(self) -> None:
+        """An inline agent's leftover frame must not run into the receipt's lines."""
+        self.command("TERM=xterm-256color")
+        self.publish_card()
+        os.write(self.master, b"true\n")
+        output = bytearray()
+        deadline = time.monotonic() + 10
+        while b"READY> " not in output and time.monotonic() < deadline:
+            ready, _, _ = select.select([self.master], [], [], 1)
+            if ready:
+                output.extend(os.read(self.master, 65536))
+        raw = output.decode(errors="replace")
+        self.assertIn("receipt-project", raw)
+        self.assertIn("\x1b[J", raw[: raw.index("receipt-project")])
+
     def test_successful_exit_receipt_leaves_successful_pipeline(self) -> None:
         """ReceiptContents: a normal process exit remains success, not a task-completion claim."""
         self.publish_card()

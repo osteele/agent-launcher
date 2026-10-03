@@ -13,6 +13,7 @@
 # Do not use a prompt theme's cached status: it may be absent or stale.
 # Re-sourcing moves this hook last without registering it twice.
 autoload -Uz add-zsh-hook
+zmodload zsh/terminfo 2>/dev/null
 
 # Keyed by the herdr pane, else TERM_SESSION_ID: identifiers the launcher and
 # an interactive shell agree on. The pane comes first because a herdr server
@@ -47,6 +48,13 @@ _agent_epilogue() {
   rm -f -- "$pending"
   (( ${#card} )) || return 0
 
+  # An agent that renders inline can leave its last frame on screen below the
+  # cursor when it exits; the receipt would print over it, and the leftover
+  # tail of a row runs into the resume command, so double-click selection
+  # takes both. Erase from the cursor to the end of the screen first. terminfo
+  # rather than a literal escape, so a terminal without the capability gets
+  # nothing.
+  [[ -t 1 ]] && echoti ed 2>/dev/null
   "${_AGENT_EPILOGUE_RENDERER}" "${card[@]}" --status "$st" 2>/dev/null
   return 0
 }
