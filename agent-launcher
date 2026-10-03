@@ -312,6 +312,7 @@ if [[ -t 0 && -t 1 ]]; then
     INTERACTIVE_LAUNCH=true
     launch_skip_value=false
     launch_mode_value=false
+    launch_positional_seen=false
     for launch_argument in "$@"; do
         if $launch_skip_value; then
             if $launch_mode_value && [[ "$launch_argument" == "json" || "$launch_argument" == "rpc" ]]; then
@@ -323,6 +324,11 @@ if [[ -t 0 && -t 1 ]]; then
             continue
         fi
         [[ "$launch_argument" == "--" ]] && break
+        # Only the first plain word can name a subcommand; later ones are
+        # message text. A headless flag after the message still counts.
+        if $launch_positional_seen && [[ "$launch_argument" != -* ]]; then
+            continue
+        fi
         case "$NAME:$launch_argument" in
             *:--help|*:-h|*:--version|*:-V|omp:--mode=json|omp:--mode=rpc|\
             codex:review|codex:login|codex:logout|codex:mcp|codex:plugin|\
@@ -368,11 +374,12 @@ if [[ -t 0 && -t 1 ]]; then
             [[ "$NAME" == "omp" && "$launch_argument" == "--mode" ]] && launch_mode_value=true
             continue
         fi
-        if [[ "$NAME" == "codex" || "$NAME" == "opencode" || "$NAME" == "agy" ]]; then
-            if [[ "$launch_argument" != -* ]]; then break; fi
+        if [[ "$launch_argument" != -* ]]; then
+            if [[ "$NAME" == "codex" || "$NAME" == "opencode" ]]; then break; fi
+            launch_positional_seen=true
         fi
     done
-    unset launch_skip_value launch_mode_value launch_argument
+    unset launch_skip_value launch_mode_value launch_positional_seen launch_argument
 fi
 
 # Resolve before changing identity, credentials, PATH or the real executable:

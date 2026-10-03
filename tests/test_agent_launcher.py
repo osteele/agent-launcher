@@ -634,16 +634,23 @@ class AgentLauncherTest(unittest.TestCase):
                 self.assertFalse(card.exists(), output)
         # A session launch keeps the receipt. Message arguments are not one of
         # omp's named subcommands, so this stays an interactive launch.
-        witness.unlink(missing_ok=True)
-        card.unlink(missing_ok=True)
-        status, output = run_pty(
-            [str(LAUNCHER_DIR / "omp"), "fix the flaky launcher test"],
-            self.environment,
-            [],
-            witness,
-        )
-        self.assertEqual(status, 0, output)
-        self.assertTrue(card.exists(), output)
+        # Only the first plain word can be a subcommand: a listed name later in
+        # an unquoted message is message text.
+        for arguments in (
+            ("fix the flaky launcher test",),
+            ("fix", "the", "git", "config"),
+        ):
+            with self.subTest(arguments=arguments):
+                witness.unlink(missing_ok=True)
+                card.unlink(missing_ok=True)
+                status, output = run_pty(
+                    [str(LAUNCHER_DIR / "omp"), *arguments],
+                    self.environment,
+                    [],
+                    witness,
+                )
+                self.assertEqual(status, 0, output)
+                self.assertTrue(card.exists(), output)
 
     def test_agy_control_subcommands_leave_no_receipt(self) -> None:
         """InteractiveTopLevelReceiptsOnly: agy subcommands and --prompt run no session."""
@@ -657,6 +664,7 @@ class AgentLauncherTest(unittest.TestCase):
             ("mcp", "list"),
             ("--effort", "high", "changelog"),
             ("--prompt", "summarize the diff"),
+            ("summarize the diff", "--print"),
         ):
             with self.subTest(arguments=arguments):
                 witness.unlink(missing_ok=True)

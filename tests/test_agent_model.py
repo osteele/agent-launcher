@@ -1083,6 +1083,35 @@ model = "provider/selected-model"
         )
 
 
+class HeadlessInvocationTest(unittest.TestCase):
+    """The Python classifier agrees with agent-launcher's receipt check."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from importlib.machinery import SourceFileLoader
+        from importlib.util import module_from_spec, spec_from_loader
+
+        loader = SourceFileLoader("agent_model", str(AGENT_MODEL))
+        spec = spec_from_loader("agent_model", loader)
+        assert spec is not None
+        cls.module = module_from_spec(spec)
+        loader.exec_module(cls.module)
+
+    def test_only_the_first_plain_word_names_a_subcommand(self) -> None:
+        headless = self.module.headless_invocation
+        for harness, arguments, expected in (
+            ("omp", ["update"], True),
+            ("omp", ["fix", "the", "git", "config"], False),
+            ("omp", ["fix the flaky test"], False),
+            ("agy", ["--effort", "high", "changelog"], True),
+            ("agy", ["fix", "update"], False),
+            ("agy", ["summarize the diff", "--print"], True),
+            ("agy", ["summarize", "--prompt=x"], True),
+        ):
+            with self.subTest(harness=harness, arguments=arguments):
+                self.assertEqual(headless(harness, arguments), expected)
+
+
 @unittest.skipIf(os.name == "nt", "the shell overlay targets Bash and Zsh")
 class ShellOverlayTest(unittest.TestCase):
     def run_shell(

@@ -651,9 +651,20 @@ def argument_takes_value(harness: str, argument: str) -> bool:
     }
 
 
+OMP_CONTROL_SUBCOMMANDS = {
+    "acp", "agents", "auth-broker", "auth-gateway", "bench", "browser-relay",
+    "cleanse", "clip", "collab", "commit", "completions", "compress", "config",
+    "dry-balance", "find", "gallery", "gc", "git", "grep", "grievances",
+    "if-bench", "images", "install", "login", "models", "play", "plugin", "ps",
+    "read", "render", "say", "search", "setup", "share", "shell", "skill", "ssh",
+    "stats", "tiny-models", "token", "toks", "ttsr", "update", "usage", "worktree",
+}
+
+
 def headless_invocation(harness: str, arguments: list[str]) -> bool:
     skip_value = False
     mode_value = False
+    positional_seen = False
     for argument in arguments:
         if skip_value:
             if mode_value and argument in {"json", "rpc"}:
@@ -662,6 +673,10 @@ def headless_invocation(harness: str, arguments: list[str]) -> bool:
             continue
         if argument == "--":
             break
+        # Only the first plain word can name a subcommand; later ones are
+        # message text. A headless flag after the message still counts.
+        if positional_seen and not argument.startswith("-"):
+            continue
         if argument in {"--help", "-h", "--version", "-V"}:
             return True
         if harness == "omp" and argument in {"--mode=json", "--mode=rpc"}:
@@ -681,11 +696,19 @@ def headless_invocation(harness: str, arguments: list[str]) -> bool:
         if harness == "opencode" and not argument.startswith("-"):
             return argument == "run"
         if harness == "agy" and not argument.startswith("-"):
-            return argument in {
+            if argument in {
                 "agent", "agents", "changelog", "help", "install", "mcp",
                 "mic-serve", "models", "plugin", "plugins", "remote-control",
                 "update",
-            }
+            }:
+                return True
+            positional_seen = True
+            continue
+        if harness == "omp" and not argument.startswith("-"):
+            if argument in OMP_CONTROL_SUBCOMMANDS:
+                return True
+            positional_seen = True
+            continue
         if harness == "agy" and (argument == "--prompt" or argument.startswith("--prompt=")):
             return True
         if harness in {"omp", "kimi", "agy", "claude"} and (
