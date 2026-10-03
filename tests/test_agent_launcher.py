@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.fake_agent_loom import install as install_fake_agent_loom
 from tests.test_agent_model import run_pty
 
 REPO = Path(__file__).resolve().parent.parent
@@ -61,6 +62,11 @@ class AgentLauncherTest(unittest.TestCase):
         # An empty HOME keeps the installer fallbacks (~/.kimi-code/bin/kimi)
         # from reaching the real agent binaries on this machine.
         self.environment["HOME"] = str(self.fake_home)
+        # agent-loom answers names from a table; its own suite owns the rules.
+        install_fake_agent_loom(self.real_bin)
+        self.names_table = self.tmp / "agent-loom.json"
+        self.names_table.write_text(json.dumps({"names": {}}))
+        self.environment["FAKE_AGENT_LOOM_TABLE"] = str(self.names_table)
         self.environment["AGENT_EPILOGUE_DIR"] = str(self.tmp / "epilogue")
         self.environment.pop("XDG_CONFIG_HOME", None)
         self.environment.pop("ZDOTDIR", None)
@@ -368,19 +374,22 @@ class AgentLauncherTest(unittest.TestCase):
         if not path.exists():
             path.symlink_to(sys.executable)
 
-    def install_session_name(self, session_id: str, display_name: str) -> None:
-        directory = self.fake_home / ".claude" / "agent-mail" / "session-names"
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"{session_id}.json").write_text(
-            json.dumps(
-                {
-                    "sessionId": session_id,
-                    "assignedAt": "2026-09-01T00:00:00.000Z",
-                    "slug": display_name.lower().replace(" ", "-"),
-                    "displayName": display_name,
-                }
-            )
-        )
+    def install_session_name(
+        self,
+        session_id: str,
+        display_name: str,
+        assigned_at: str = "2026-09-01T00:00:00.000Z",
+        project: str | None = None,
+    ) -> None:
+        """Give a session a name agent-loom will report."""
+        table = json.loads(self.names_table.read_text())
+        table["names"][session_id] = {
+            "slug": display_name.lower().replace(" ", "-"),
+            "displayName": display_name,
+            "assignedAt": assigned_at,
+            **({"project": project} if project else {}),
+        }
+        self.names_table.write_text(json.dumps(table))
 
     def install_agentsview(
         self,

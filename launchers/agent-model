@@ -50,13 +50,6 @@ HARNESS_RESUME_ARGUMENTS: dict[str, tuple[str, ...]] = {
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 NATIVE_ID_PATTERN = re.compile(rf"(?:session_)?{_UUID}|ses_[A-Za-z0-9]{{10,}}")
 
-# agent-mail's durable store of generated session names, keyed by a hash of the
-# session id: {"sessionId", "assignedAt", "slug", "displayName"}. Read directly
-# because agent-mail's CLI resolves a name only for a *live* session, and a
-# session worth resuming has usually exited. Absent, unreadable, and malformed
-# records are all "no match" rather than an error.
-SESSION_NAMES_DIR = Path.home() / ".claude" / "agent-mail" / "session-names"
-
 # Rendered in this order, so an invocation does not depend on file key order.
 ROUTE_FIELDS = ("model",)
 
@@ -392,70 +385,57 @@ def current_session_ids() -> set[str]:
     return ids
 
 
-def _name_matches(query: str, slug: str, display_name: str) -> bool:
-    """Whether `query` names this session.
+def sessions_named(query: str) -> list[SessionMatch]:
+    """Sessions whose agent-loom name is `query`, most recently named first.
 
-    Accepts what the surfaces show: the display name ("Efficient Deer"), the
-    slug ("efficient-deer"), and the project-qualified full name agent-mail
-    addresses sessions by ("augur-efficient-deer").
+    Asked of `agent-loom session-name --name`, which answers for exited
+    sessions too and matches the display name ("Efficient Deer"), the slug
+    ("efficient-deer"), and the project-qualified full name
+    ("augur-efficient-deer") for sessions whose record holds their project. The
+    name store itself is private to agent-loom. agent-loom absent, outdated, or
+    failing is no match, reported on stderr like an AgentsView failure.
     """
-    normalized = query.casefold()
-    if normalized in (display_name.casefold(), slug.casefold()):
-        return True
-    return bool(slug) and normalized.endswith(f"-{slug.casefold()}")
-
-
-def _name_prefilter(query: str) -> bytes:
-    """The one token every accepted spelling of a name must contain.
-
-    A generated name ends in its noun, whether it arrives as "Efficient Deer",
-    "efficient-deer", or "augur-efficient-deer". Requiring that word of the raw
-    bytes skips the decode and JSON parse for all but a handful of records, and
-    the store holds one per session ever named -- 3700 of them on this machine,
-    where decoding every record costs four times reading them all.
-    """
-    tokens = re.findall(r"[0-9A-Za-z]+", query.casefold())
-    return tokens[-1].encode("ascii") if tokens else b""
-
-
-def sessions_named(query: str, directory: Path = SESSION_NAMES_DIR) -> list[SessionMatch]:
-    """Sessions whose agent-mail name is `query`, most recently named first."""
-    try:
-        entries = sorted(directory.iterdir())
-    except OSError:
+    agent_loom = shutil.which("agent-loom")
+    if agent_loom is None:
         return []
-    prefilter = _name_prefilter(query)
+    try:
+        result = subprocess.run(
+            [agent_loom, "session-name", "--name", query, "--json"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"agent-model: agent-loom name lookup failed: {error}", file=sys.stderr)
+        return []
+    if result.returncode != 0:
+        detail = result.stderr.strip().splitlines()[:1]
+        print(
+            f"agent-model: agent-loom name lookup failed: {detail[0] if detail else result.returncode}",
+            file=sys.stderr,
+        )
+        return []
+    try:
+        answer = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        print(f"agent-model: agent-loom returned invalid JSON: {error}", file=sys.stderr)
+        return []
+    if not isinstance(answer, dict):
+        print("agent-model: agent-loom returned an unrecognized name answer", file=sys.stderr)
+        return []
+    sessions = answer.get("sessions")
+    if answer.get("schema") != "agent-loom-session-names/v1" or not isinstance(sessions, list):
+        print("agent-model: agent-loom returned an unrecognized name answer", file=sys.stderr)
+        return []
     matches: list[SessionMatch] = []
-    unreadable = 0
-    for entry in entries:
-        if entry.suffix != ".json":
+    for session in sessions:
+        if not isinstance(session, dict):
             continue
-        try:
-            content = entry.read_bytes()
-        except OSError:
-            unreadable += 1
+        session_id = session.get("sessionId")
+        assigned = session.get("assignedAt")
+        if not isinstance(session_id, str) or not session_id:
             continue
-        if prefilter and prefilter not in content.lower():
-            continue
-        try:
-            record = json.loads(content)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            unreadable += 1
-            continue
-        if not isinstance(record, dict):
-            unreadable += 1
-            continue
-        session_id = record.get("sessionId")
-        slug = record.get("slug")
-        display_name = record.get("displayName")
-        if not isinstance(session_id, str) or not isinstance(slug, str):
-            unreadable += 1
-            continue
-        if not isinstance(display_name, str):
-            display_name = slug
-        if not _name_matches(query, slug, display_name):
-            continue
-        assigned = record.get("assignedAt")
         matches.append(
             SessionMatch(
                 session_id=session_id,
@@ -463,12 +443,6 @@ def sessions_named(query: str, directory: Path = SESSION_NAMES_DIR) -> list[Sess
                 recency=assigned if isinstance(assigned, str) else "",
                 label=session_id,
             )
-        )
-    if unreadable and not matches:
-        print(
-            f"agent-model: skipped {unreadable} unreadable session-name "
-            f"records under {directory}",
-            file=sys.stderr,
         )
     return _ranked(matches)
 
@@ -1031,7 +1005,7 @@ def print_usage(commands: dict[str, Command], file: object = sys.stdout) -> None
 Models: {", ".join(commands)}
 Harness aliases: own, self, and . select the model's native harness.
 
-A SESSION is a session id, an agent-mail session name ("Efficient Deer"), or
+A SESSION is a session id, an agent-loom session name ("Efficient Deer"), or
 text from the session's transcript. The last two resolve to an id, selecting
 the most recent session when several match.
 

@@ -7,7 +7,6 @@ live session anywhere.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -20,6 +19,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+
+from tests.fake_agent_loom import install as install_fake_agent_loom
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -41,11 +42,7 @@ class ReceiptTestCase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.home = self.tmp / "home"
-        self.store = self.home / ".claude" / "agent-mail" / "session-names"
-        self.breadcrumbs = self.store / "by-host-pid"
-        self.registry = self.home / ".claude" / "agent-mail" / "registry"
-        for directory in (self.store, self.breadcrumbs, self.registry):
-            directory.mkdir(parents=True, exist_ok=True)
+        self.home.mkdir()
         self.environment = dict(os.environ)
         self.environment["HOME"] = str(self.home)
         for name in ("HERDR_PANE_ID",):
@@ -59,48 +56,47 @@ class ReceiptTestCase(unittest.TestCase):
         agentsview.write_text("#!/bin/sh\nexit 1\n")
         agentsview.chmod(0o755)
         self.environment["PATH"] = f"{self.bin_dir}:{os.defpath}"
+        # agent-loom answers names from a table; its own suite owns the rules.
+        install_fake_agent_loom(self.bin_dir)
+        self.names_table = self.tmp / "agent-loom.json"
+        self.agent_loom_log = self.tmp / "agent-loom.log"
+        self.table: dict[str, object] = {
+            "names": {},
+            "hostPids": {},
+            "log": str(self.agent_loom_log),
+        }
+        self.save_table()
+        self.environment["FAKE_AGENT_LOOM_TABLE"] = str(self.names_table)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
+    def save_table(self) -> None:
+        self.names_table.write_text(json.dumps(self.table))
+
     def write_name(self, session_id: str, display_name: str) -> None:
-        """Store a name the way agent-mail does: keyed by sha256 of the id."""
-        digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        (self.store / f"{digest}.json").write_text(
-            json.dumps(
-                {
-                    "sessionId": session_id,
-                    "assignedAt": "2026-09-17T03:29:17.630Z",
-                    "scheme": "adjective-noun",
-                    "slug": display_name.lower().replace(" ", "-"),
-                    "displayName": display_name,
-                }
-            )
-        )
+        """Give a session a name agent-loom will report."""
+        names = self.table["names"]
+        assert isinstance(names, dict)
+        names[session_id] = {
+            "slug": display_name.lower().replace(" ", "-"),
+            "displayName": display_name,
+        }
+        self.save_table()
 
-    def write_breadcrumb(
-        self, host_pid: int, session_id: str, display_name: str, recorded_at: str
-    ) -> None:
-        (self.breadcrumbs / f"{host_pid}.json").write_text(
-            json.dumps(
-                {
-                    "hostPid": host_pid,
-                    "sessionId": session_id,
-                    "recordedAt": recorded_at,
-                    "slug": display_name.lower().replace(" ", "-"),
-                    "displayName": display_name,
-                }
-            )
-        )
+    def write_host_pid(self, host_pid: int, session_id: str) -> None:
+        """Make agent-loom answer for the session that ran under HOST_PID."""
+        host_pids = self.table["hostPids"]
+        assert isinstance(host_pids, dict)
+        host_pids[str(host_pid)] = session_id
+        self.save_table()
 
-    def write_registration(
-        self, host_pid: int, session_id: str, name: str = "project-1"
-    ) -> None:
-        (self.registry / f"{name}-{host_pid}.json").write_text(
-            json.dumps(
-                {"pid": host_pid + 1, "parentPid": host_pid, "sessionId": session_id}
-            )
-        )
+    def agent_loom_calls(self) -> list[list[str]]:
+        if not self.agent_loom_log.exists():
+            return []
+        return [
+            json.loads(line) for line in self.agent_loom_log.read_text().splitlines()
+        ]
 
     def write_native_session(self) -> None:
         directory = self.home / ".omp" / "agent" / "sessions" / "project"
@@ -159,6 +155,11 @@ class ReceiptTestCase(unittest.TestCase):
 
 
 class NameLookupTest(ReceiptTestCase):
+    """agent-mail-name adapts agent-loom's answer to an exit receipt.
+
+    The rules for reading agent-loom's store -- reused pids, stale and undated
+    breadcrumbs, the live registry -- are agent-loom's, and are tested there."""
+
     def test_session_id_resolves_to_display_name(self) -> None:
         self.write_name("abc-123", "Flying Cake")
         result = self.resolve("--session-id", "abc-123")
@@ -166,105 +167,85 @@ class NameLookupTest(ReceiptTestCase):
         self.assertEqual(result.stdout.strip(), "Flying Cake")
 
     def test_unknown_session_is_not_an_error(self) -> None:
-        """Exit 3, not 1: a session that never attached agent-mail has no name,
+        """Exit 3, not 1: a session that never attached agent-loom has no name,
         and that must never be what breaks an exit receipt."""
         result = self.resolve("--session-id", "never-seen")
         self.assertEqual(result.returncode, 3)
         self.assertEqual(result.stdout, "")
 
-    def test_slug_is_used_when_a_record_has_no_display_name(self) -> None:
-        digest = hashlib.sha256(b"slug-only").hexdigest()
-        (self.store / f"{digest}.json").write_text(json.dumps({"slug": "amber-ember"}))
-        self.assertEqual(
-            self.resolve("--session-id", "slug-only").stdout.strip(), "amber-ember"
-        )
-
-    def test_malformed_record_reads_as_no_name(self) -> None:
-        digest = hashlib.sha256(b"broken").hexdigest()
-        (self.store / f"{digest}.json").write_text("{not json")
-        self.assertEqual(self.resolve("--session-id", "broken").returncode, 3)
-
-    def test_host_pid_breadcrumb_wins_where_the_launcher_id_misses(self) -> None:
-        """The Codex case: agent-mail keyed the name by a thread id the
-        launcher never saw, so only the host pid finds it."""
-        self.write_breadcrumb(
-            4242, "codex-thread-id", "Nutritious Cucumber", "2026-09-17T04:00:00.000Z"
-        )
+    def test_host_pid_and_launch_time_are_forwarded(self) -> None:
+        """The Codex case: agent-loom keyed the name by a thread id the launcher
+        never saw, so the host pid -- bounded by the launch time -- finds it."""
+        self.write_name("codex-thread-id", "Nutritious Cucumber")
+        self.write_host_pid(4242, "codex-thread-id")
         result = self.resolve(
-            "--session-id", "launcher-minted-id", "--host-pid", "4242"
+            "--session-id",
+            "launcher-minted-id",
+            "--host-pid",
+            "4242",
+            "--not-before",
+            "2026-09-17T04:00:00Z",
         )
         self.assertEqual(result.stdout.strip(), "Nutritious Cucumber")
+        self.assertEqual(
+            self.agent_loom_calls(),
+            [
+                [
+                    "session-name",
+                    "--session",
+                    "launcher-minted-id",
+                    "--host-pid",
+                    "4242",
+                    "--not-before",
+                    "2026-09-17T04:00:00Z",
+                    "--json",
+                ]
+            ],
+        )
 
     def test_session_id_is_preferred_over_the_host_pid(self) -> None:
         self.write_name("abc-123", "Flying Cake")
-        self.write_breadcrumb(4242, "other", "Wrong Name", "2026-09-17T04:00:00.000Z")
+        self.write_name("other", "Wrong Name")
+        self.write_host_pid(4242, "other")
         result = self.resolve("--session-id", "abc-123", "--host-pid", "4242")
         self.assertEqual(result.stdout.strip(), "Flying Cake")
 
-    def test_breadcrumb_older_than_the_launch_is_rejected(self) -> None:
-        """Pids are reused. A breadcrumb from an earlier process with this pid
-        would otherwise put a stranger's name on the receipt."""
-        self.write_breadcrumb(4242, "older", "Stale Name", "2026-09-16T10:00:00.000Z")
-        result = self.resolve(
-            "--host-pid", "4242", "--not-before", "2026-09-17T04:00:00Z"
-        )
-        self.assertEqual(result.returncode, 3)
-
-    def test_breadcrumb_within_the_launch_second_is_kept(self) -> None:
-        """agent-mail records milliseconds and the launcher does not, and "."
-        sorts below "Z" -- comparing the raw strings would reject a breadcrumb
-        written in the same second as the launch."""
-        self.write_breadcrumb(
-            4242, "same-second", "Flying Cake", "2026-09-17T04:00:00.630Z"
-        )
-        result = self.resolve(
-            "--host-pid", "4242", "--not-before", "2026-09-17T04:00:00Z"
-        )
-        self.assertEqual(result.stdout.strip(), "Flying Cake")
-
-    def test_live_registry_answers_without_a_breadcrumb(self) -> None:
-        self.write_name("registered-session", "Amber Ember")
-        self.write_registration(5150, "registered-session")
-        result = self.resolve("--host-pid", "5150")
-        self.assertEqual(result.stdout.strip(), "Amber Ember")
-
-    def test_stale_breadcrumb_cannot_fall_through_to_old_registry(self) -> None:
-        """ReceiptContents: pid reuse cannot attribute a previous run's name."""
-        self.write_name("older", "Wrong Session")
-        self.write_breadcrumb(4242, "older", "Wrong Session", "2026-09-16T10:00:00Z")
-        self.write_registration(4242, "older")
-        result = self.resolve(
-            "--host-pid", "4242", "--not-before", "2026-09-17T04:00:00Z"
-        )
-        self.assertEqual(result.returncode, 3)
-        self.assertEqual(result.stdout, "")
-
-    def test_undated_breadcrumb_does_not_establish_launch_identity(self) -> None:
-        """ReceiptContents: a host-pid name requires evidence newer than launch."""
-        for recorded_at in ("", "not-a-time"):
-            with self.subTest(recorded_at=recorded_at):
-                self.write_breadcrumb(4242, "older", "Wrong Session", recorded_at)
-                result = self.resolve(
-                    "--host-pid", "4242", "--not-before", "2026-09-17T04:00:00Z"
-                )
+    def test_missing_outdated_or_garbled_agent_loom_reads_as_no_name(self) -> None:
+        """ReceiptContents: no failure of agent-loom's can break the receipt."""
+        self.write_name("abc-123", "Flying Cake")
+        for mode in ("old", "garbage"):
+            with self.subTest(mode=mode):
+                self.table["mode"] = mode
+                self.save_table()
+                result = self.resolve("--session-id", "abc-123")
                 self.assertEqual(result.returncode, 3)
+                self.assertEqual(result.stdout, "")
+        for stand_in in ("agent-loom", "agent-loom.cmd"):
+            (self.bin_dir / stand_in).unlink(missing_ok=True)
+        self.assertEqual(self.resolve("--session-id", "abc-123").returncode, 3)
 
-    def test_invalid_utf8_degrades_to_no_name(self) -> None:
-        """ReceiptContents: corrupt name data cannot break the exit receipt."""
-        digest = hashlib.sha256(b"broken").hexdigest()
-        (self.store / f"{digest}.json").write_bytes(b"\xff")
-        result = self.resolve("--session-id", "broken")
+    @unittest.skipUnless(
+        os.name == "posix", "an unexecutable file is a POSIX permission"
+    )
+    def test_unexecutable_agent_loom_reads_as_no_name(self) -> None:
+        (self.bin_dir / "agent-loom").unlink()
+        # Executable but not a program: exec fails with ENOEXEC, not ENOENT.
+        broken = self.bin_dir / "agent-loom"
+        broken.write_bytes(b"\x7fELF\x00garbage")
+        broken.chmod(0o755)
+        result = self.resolve("--session-id", "abc-123")
         self.assertEqual(result.returncode, 3)
         self.assertEqual(result.stderr, "")
 
-    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX named pipes")
-    def test_stalled_name_store_cannot_hold_the_prompt(self) -> None:
-        """ReceiptContents: unavailable name storage has a bounded no-name outcome."""
-        digest = hashlib.sha256(b"stalled").hexdigest()
-        os.mkfifo(self.store / f"{digest}.json")
-        result = self.resolve("--session-id", "stalled")
+    def test_stalled_agent_loom_cannot_hold_the_prompt(self) -> None:
+        """ReceiptContents: an unavailable name has a bounded no-name outcome."""
+        self.table["mode"] = "hang"
+        self.save_table()
+        started = time.monotonic()
+        result = self.resolve("--session-id", "abc-123")
         self.assertEqual(result.returncode, 3)
         self.assertEqual(result.stderr, "")
+        self.assertLess(time.monotonic() - started, 4.5)
 
 
 class EpilogueRenderTest(ReceiptTestCase):

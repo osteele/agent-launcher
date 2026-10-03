@@ -11,6 +11,8 @@ import time
 import unittest
 from pathlib import Path
 
+from tests.fake_agent_loom import install as install_fake_agent_loom
+
 
 REPO = Path(__file__).resolve().parent.parent
 AGENT_MODEL = REPO / "launchers" / "agent-model"
@@ -95,6 +97,11 @@ class AgentModelTest(unittest.TestCase):
         ):
             self.environment.pop(variable, None)
         self.environment["PATH"] = f"{self.bin_dir}:{os.defpath}"
+        # agent-loom answers names from a table; its own suite owns the rules.
+        install_fake_agent_loom(self.bin_dir)
+        self.names_table = self.tmp / "agent-loom.json"
+        self.names_table.write_text(json.dumps({"names": {}}))
+        self.environment["FAKE_AGENT_LOOM_TABLE"] = str(self.names_table)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -427,22 +434,17 @@ model = "provider/selected-model"
         session_id: str,
         display_name: str,
         assigned_at: str = "2026-09-01T00:00:00.000Z",
+        project: str | None = None,
     ) -> None:
-        """Add one record to the agent-mail session-name store this HOME has."""
-        directory = self.home / ".claude" / "agent-mail" / "session-names"
-        directory.mkdir(parents=True, exist_ok=True)
-        slug = display_name.lower().replace(" ", "-")
-        (directory / f"{session_id}.json").write_text(
-            json.dumps(
-                {
-                    "sessionId": session_id,
-                    "assignedAt": assigned_at,
-                    "scheme": "adjective-noun",
-                    "slug": slug,
-                    "displayName": display_name,
-                }
-            )
-        )
+        """Give a session a name agent-loom will report."""
+        table = json.loads(self.names_table.read_text())
+        table["names"][session_id] = {
+            "slug": display_name.lower().replace(" ", "-"),
+            "displayName": display_name,
+            "assignedAt": assigned_at,
+            **({"project": project} if project else {}),
+        }
+        self.names_table.write_text(json.dumps(table))
 
     def install_agentsview_router(
         self,
@@ -527,9 +529,22 @@ model = "provider/selected-model"
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), f"codex resume {session_id}")
 
-    def test_resume_accepts_the_project_qualified_full_name(self) -> None:
+    def test_an_unrecognized_name_answer_is_no_match(self) -> None:
+        """Valid JSON that is not the documented object reads as no name rather
+        than crashing the resume lookup."""
         session_id = "9a1d4f7c-2b6e-4c11-9f3a-5d8e0c2b7a44"
         self.write_session_name(session_id, "Efficient Deer")
+        table = json.loads(self.names_table.read_text())
+        table["mode"] = "array"
+        self.names_table.write_text(json.dumps(table))
+        self.install_agentsview_router({session_id: "codex"})
+        result = self.run_model("resolve", "codex", "--resume", "Efficient Deer")
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("unrecognized name answer", result.stderr)
+
+    def test_resume_accepts_the_project_qualified_full_name(self) -> None:
+        session_id = "9a1d4f7c-2b6e-4c11-9f3a-5d8e0c2b7a44"
+        self.write_session_name(session_id, "Efficient Deer", project="/code/augur")
         self.install_agentsview_router({session_id: "codex"})
         result = self.run_model("resolve", "codex", "--resume", "augur-efficient-deer")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -665,8 +680,8 @@ model = "provider/selected-model"
         self.assertEqual(calls, [])
 
     def write_announced(self, session_id: str, project: str) -> Path:
-        """agent-mail's announcement record, where a session's cwd outlives it."""
-        directory = self.home / ".claude" / "agent-mail" / "announced"
+        """agent-loom's announcement record, where a session's cwd outlives it."""
+        directory = self.home / ".local" / "state" / "agent-loom" / "announced"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"typeset-viewer-67c7ac162c-{session_id}.json"
         path.write_text(

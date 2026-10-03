@@ -1,189 +1,119 @@
 #!/usr/bin/env python3
-"""Resolve a session's readable agent-mail name ("Flying Cake").
+"""Resolve a session's readable agent-loom name ("Flying Cake").
 
-agent-mail mints one name per session and keeps it in a durable store keyed by
-the sha256 of the session id. The name outlives the session: the store is never
-pruned, which is what makes it readable from an exit path that runs after the
-agent is gone.
+agent-loom assigns one name per session and keeps it after the session ends,
+which is what makes it readable from an exit path that runs after the agent is
+gone. The name is asked of `agent-loom session-name`: agent-loom's store is
+private to it, and its files move with its layout.
 
-Two ways to ask, because the id agent-mail keyed on is not always the id a
-launcher knows. agent-mail resolves its session id from CLAUDE_CODE_SESSION_ID,
+Two ways to ask, because the id agent-loom keyed on is not always the id a
+launcher knows. agent-loom resolves its session id from CLAUDE_CODE_SESSION_ID,
 then CODEX_THREAD_ID, then the launcher-minted AGENT_SESSION_ID -- so for Codex
 the thread id wins and a launcher's own id finds nothing. `--host-pid` asks the
 question the other way round: which session belonged to this agent process.
+`--not-before` is the launch time, which rejects a record left by an earlier
+process that had the same pid.
 
 Exit 3 means no name, which is not an error. A session that never attached
-agent-mail never had one, and that must never be what breaks an exit receipt.
+agent-loom never had one, and neither an absent, outdated, or stalled
+agent-loom may be what breaks an exit receipt.
 
 Not on PATH: reached by absolute path from agent-epilogue and the launcher.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
-from datetime import datetime
+import os
+import shutil
 import signal
+import subprocess
 import sys
-from pathlib import Path
-
-STATE_DIR = Path.home() / ".claude" / "agent-mail"
-SESSION_NAMES_DIR = STATE_DIR / "session-names"
-# Written by agent-mail's channel server at startup, keyed by the host agent's
-# pid. Authoritative where a hash of a launcher id only guesses: the channel
-# records the id it actually resolved.
-BREADCRUMB_DIR = SESSION_NAMES_DIR / "by-host-pid"
-REGISTRY_DIR = STATE_DIR / "registry"
 
 NO_NAME = 3
+LOOKUP_SECONDS = 2
 
 
-def _load(path: Path) -> dict[str, object] | None:
-    """Parse one JSON record, or None. Absent, unreadable, and malformed are
-    all the same answer here: this cannot be the thing that fails."""
-    try:
-        with path.open(encoding="utf-8") as stream:
-            text = stream.read(65537)
-        if len(text) > 65536:
-            return None
-    except (OSError, UnicodeError):
+def ask_agent_loom(arguments: list[str]) -> str | None:
+    """The display name agent-loom reports, or None.
+
+    The lookup runs in its own process group and the whole group is killed on
+    timeout: a killed process whose child still holds the output pipe would
+    otherwise keep this waiting for the child. Where there are no process
+    groups, the pipe is closed instead of drained.
+    """
+    agent_loom = shutil.which("agent-loom")
+    if agent_loom is None:
         return None
     try:
-        record = json.loads(text)
+        process = subprocess.Popen(
+            [agent_loom, "session-name", *arguments, "--json"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            start_new_session=True,
+        )
+    except OSError:
+        # Not executable, a bad interpreter line, a vanished file: no name.
+        return None
+    try:
+        output, _ = process.communicate(timeout=LOOKUP_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            if hasattr(os, "killpg"):
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            pass  # It finished between the timeout and the kill.
+        # Wait for the process itself, not for its output: on Windows only the
+        # process is killed, and a surviving child would hold the pipe open.
+        if process.stdout is not None:
+            process.stdout.close()
+        process.wait()
+        return None
+    if process.returncode != 0:
+        return None
+    try:
+        answer = json.loads(output)
     except ValueError:
         return None
-    return record if isinstance(record, dict) else None
-
-
-def _display_name(record: dict[str, object]) -> str | None:
+    if not isinstance(answer, dict) or answer.get("schema") != "agent-loom-session-name/v1":
+        return None
+    name = answer.get("name")
+    if not isinstance(name, dict):
+        return None
     for key in ("displayName", "slug"):
-        value = record.get(key)
+        value = name.get(key)
         if isinstance(value, str) and value:
             return value
     return None
 
 
-def name_for_session(session_id: str, directory: Path = SESSION_NAMES_DIR) -> str | None:
-    """The stored name for `session_id`, by the store's own key derivation."""
-    if not session_id:
-        return None
-    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-    record = _load(directory / f"{digest}.json")
-    return _display_name(record) if record else None
-
-
-def _breadcrumb(host_pid: int, directory: Path = BREADCRUMB_DIR) -> dict[str, object] | None:
-    return _load(directory / f"{host_pid}.json")
-
-
-def _to_second(timestamp: str) -> datetime | None:
-    """An ISO timestamp truncated to the second, for ordering two of them.
-
-    The two sides are written by different programs: agent-mail records
-    milliseconds, the launcher does not, and "17.630Z" sorts *below* "17Z"
-    because "." precedes "Z". Comparing whole seconds is what the two spellings
-    actually agree on, and a breadcrumb written in the same second as the
-    launch is not stale.
-    """
-    try:
-        value = datetime.fromisoformat(timestamp)
-    except ValueError:
-        return None
-    return value.replace(microsecond=0) if value.tzinfo is not None else None
-
-
-def _registry_session(host_pid: int, directory: Path = REGISTRY_DIR) -> str | None:
-    """The session id of a live agent-mail server whose host is `host_pid`.
-
-    Registry entries are pruned when the server exits, so this answers only
-    while the session is still running. It is the fallback for a session that
-    started before agent-mail began leaving breadcrumbs.
-    """
-    try:
-        entries = sorted(directory.iterdir())
-    except OSError:
-        return None
-    for entry in entries:
-        if entry.suffix != ".json":
-            continue
-        record = _load(entry)
-        if record is None:
-            continue
-        if record.get("parentPid") != host_pid:
-            continue
-        session_id = record.get("sessionId")
-        if isinstance(session_id, str) and session_id:
-            return session_id
-    return None
-
-
-def name_for_host_pid(
-    host_pid: int,
-    *,
-    not_before: str | None = None,
-    breadcrumbs: Path = BREADCRUMB_DIR,
-    registry: Path = REGISTRY_DIR,
-    store: Path = SESSION_NAMES_DIR,
-) -> str | None:
-    """The name of the session that ran under agent process `host_pid`.
-
-    `not_before` is an ISO timestamp the breadcrumb must not predate. Pids are
-    reused, and a breadcrumb left by an earlier process with the same pid would
-    otherwise put a stranger's name on this receipt.
-    """
-    record = _breadcrumb(host_pid, breadcrumbs)
-    if record is not None:
-        recorded = record.get("recordedAt")
-        # Without a valid timestamp a reused pid cannot establish ownership of
-        # this launch. Do not bypass a stale breadcrumb through the registry.
-        if not_before is not None:
-            recorded_second = _to_second(recorded) if isinstance(recorded, str) else None
-            started_second = _to_second(not_before)
-            if recorded_second is None or started_second is None or recorded_second < started_second:
-                return None
-        name = _display_name(record)
-        if name:
-            return name
-        session_id = record.get("sessionId")
-        if isinstance(session_id, str):
-            resolved = name_for_session(session_id, store)
-            if resolved:
-                return resolved
-    if not_before is not None:
-        return None
-    session_id = _registry_session(host_pid, registry)
-    return name_for_session(session_id, store) if session_id else None
-
-
 def main(argv: list[str]) -> int:
-    session_id: str | None = None
-    host_pid: int | None = None
-    not_before: str | None = None
+    forwarded: list[str] = []
     arguments = list(argv)
     while arguments:
         argument = arguments.pop(0)
         if argument == "--session-id" and arguments:
-            session_id = arguments.pop(0)
+            forwarded += ["--session", arguments.pop(0)]
         elif argument == "--host-pid" and arguments:
             value = arguments.pop(0)
             if not value.isdigit():
                 print(f"agent-mail-name: not a pid: {value}", file=sys.stderr)
                 return 2
-            host_pid = int(value)
+            forwarded += ["--host-pid", value]
         elif argument == "--not-before" and arguments:
-            not_before = arguments.pop(0)
+            forwarded += ["--not-before", arguments.pop(0)]
         elif argument in ("--help", "-h"):
             print(__doc__.strip(), file=sys.stderr)
             return 0
         else:
             print(f"agent-mail-name: unexpected argument: {argument}", file=sys.stderr)
             return 2
-
-    name: str | None = None
-    if session_id:
-        name = name_for_session(session_id)
-    if name is None and host_pid is not None:
-        name = name_for_host_pid(host_pid, not_before=not_before)
+    if not forwarded:
+        return NO_NAME
+    name = ask_agent_loom(forwarded)
     if name is None:
         return NO_NAME
     print(name)
@@ -199,10 +129,12 @@ def _lookup_timed_out(signum: int, frame: object) -> None:
 
 
 if __name__ == "__main__":
-    # A receipt must not hold up the next prompt, even on a stalled filesystem.
+    # A receipt must not hold up the next prompt, even on a stalled filesystem:
+    # finding agent-loom on PATH can block on a dead mount before the lookup's
+    # own bound starts. This backstop covers the whole run, one second later.
     if hasattr(signal, "SIGALRM"):
         signal.signal(signal.SIGALRM, _lookup_timed_out)
-        signal.alarm(2)
+        signal.alarm(LOOKUP_SECONDS + 1)
     try:
         sys.exit(main(sys.argv[1:]))
     except _LookupTimeout:
