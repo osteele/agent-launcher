@@ -436,10 +436,16 @@ def sessions_named(query: str) -> list[SessionMatch]:
         assigned = session.get("assignedAt")
         if not isinstance(session_id, str) or not session_id:
             continue
+        harness = ""
+        if session.get("managed") is True:
+            session_id = session.get("nativeSessionId")
+            harness = session.get("nativeHarness")
+            if not isinstance(session_id, str) or not session_id or harness not in {"claude", "codex", "omp"}:
+                raise ConfigError(f"agent-loom name {query!r} has no confirmed native conversation")
         matches.append(
             SessionMatch(
                 session_id=session_id,
-                harness="",
+                harness=harness,
                 recency=assigned if isinstance(assigned, str) else "",
                 label=session_id,
             )
@@ -585,7 +591,11 @@ def resolve_resume_target(query: str) -> Resolution:
             return Resolution([], True)
         resolution = exact_session(query)
         return Resolution(_ranked(resolution.matches), resolution.conclusive)
-    named = sessions_named(query)
+    try:
+        named = sessions_named(query)
+    except ConfigError as error:
+        print(f"agent-model: {error}", file=sys.stderr)
+        return Resolution([], False)
     if named:
         matches = []
         conclusive = True
@@ -594,6 +604,7 @@ def resolve_resume_target(query: str) -> Resolution:
             conclusive = conclusive and resolution.conclusive
             matches.extend(
                 match._replace(recency=candidate.recency) for match in resolution.matches
+                if not candidate.harness or match.harness == candidate.harness
             )
         # A known name never falls through to an unrelated transcript mentioning it.
         return Resolution(_ranked(matches), conclusive)
@@ -609,20 +620,57 @@ def interactive_invocation(harness: str, arguments: list[str]) -> bool:
 def argument_takes_value(harness: str, argument: str) -> bool:
     """Native option values cannot be interpreted as resume or execution modes."""
     if argument in {
-        "--model", "-m", "--provider", "--config", "-c", "--profile", "--cd", "-C",
+        "--model", "-m", "--provider", "--config", "--profile", "--cd", "-C",
         "--resume", "-r", "--session", "-s", "-S", "--conversation", "--mode",
     }:
         return True
+    if harness == "claude":
+        return argument in {
+            "--agent", "--agents", "--append-system-prompt", "--append-system-prompt-file",
+            "--system-prompt", "--system-prompt-file", "--settings", "--setting-sources",
+            "--permission-mode", "--effort", "--input-format", "--output-format",
+            "--json-schema", "--mcp-config", "--plugin-dir", "--tools", "--allowedTools",
+            "--allowed-tools", "--disallowedTools", "--disallowed-tools", "--add-dir",
+            "--max-budget-usd", "--max-turns", "--fallback-model", "--session-id",
+        }
+    if harness == "omp":
+        return argument in {
+            "--cwd", "--thinking", "--smol", "--slow", "--plan", "--service-tier",
+            "--system-prompt", "--system-prompt-template", "--append-system-prompt",
+            "--add-dir", "--session-dir", "--tools", "--models", "--api-key",
+            "--hook", "--extension", "-e", "--max-time", "--skills", "--plugin-dir",
+            "--prewalk-into", "--plan-yolo-into", "--approval-mode", "--alias", "--export",
+        }
     if harness == "agy":
         return argument in {
             "--add-dir", "--agent", "--effort", "--input-format", "--json-schema",
             "--log-file", "--output-format", "--print-timeout", "--project",
         }
     return harness == "codex" and argument in {
-        "-p", "-i", "--image", "--enable", "--disable", "--remote",
+        "-c", "-p", "-i", "--image", "--enable", "--disable", "--remote",
         "--remote-auth-token-env", "--local-provider", "--sandbox", "--add-dir",
         "-a", "--ask-for-approval", "--output-schema", "--output-last-message", "-o",
     }
+
+
+def has_continuation_option(harness: str, arguments: list[str]) -> bool:
+    skip_value = False
+    for index, argument in enumerate(arguments):
+        if skip_value:
+            skip_value = False
+            continue
+        if argument == "--":
+            break
+        if argument == "--from" or argument.startswith("--from="):
+            return True
+        if (
+            harness in {"claude", "omp"} and argument in {"--resume", "-r"}
+            and index + 1 < len(arguments) and arguments[index + 1].startswith("-")
+        ):
+            continue
+        if "=" not in argument and argument_takes_value(harness, argument):
+            skip_value = True
+    return False
 
 
 OMP_CONTROL_SUBCOMMANDS = {
@@ -774,8 +822,16 @@ def resolve(
     if model not in commands:
         raise ConfigError(f"unknown model {model!r}; expected {', '.join(commands)}")
     explicit, forwarded = parse_harness_option(commands, model, arguments)
-    resume_requested, resume_id, forwarded = parse_resume_option(forwarded)
     invocation_harness = explicit or defaults_with_sources(commands)[model][0]
+    if has_continuation_option(invocation_harness, forwarded):
+        # --from fixes the destination. Its parser rejects conflicting native
+        # modes before any resume lookup can switch harnesses.
+        invocation = resume_model_route(
+            commands, model, invocation_harness, invocation_harness,
+            interactive_invocation(invocation_harness, forwarded),
+        )
+        return [*invocation, *forwarded], invocation_harness
+    resume_requested, resume_id, forwarded = parse_resume_option(forwarded)
     harness = invocation_harness
     mode_arguments = (resume_arguments(harness, resume_id) if resume_requested else []) + forwarded
     interactive = interactive_invocation(harness, mode_arguments)
@@ -866,7 +922,13 @@ def command_receipt_target(arguments: list[str]) -> int:
     if NATIVE_ID_PATTERN.fullmatch(native_id) and prefix in (None, agent):
         card_id = verified(session_id)
     if name.strip():
-        named = {verified(candidate.session_id) for candidate in sessions_named(name)}
+        try:
+            named = {
+                verified(candidate.session_id) if candidate.harness in ("", agent) else None
+                for candidate in sessions_named(name)
+            }
+        except ConfigError:
+            named = {None}
         if len(named) == 1 and None not in named and card_id in (None, *named):
             print(name)
             return 0
@@ -991,6 +1053,7 @@ def print_usage(commands: dict[str, Command], file: object = sys.stdout) -> None
         f"""Usage:
   agent-model launch MODEL [--harness HARNESS | -h HARNESS] [--resume [SESSION]] [ARG ...]
   agent-model resolve MODEL [--harness HARNESS | -h HARNESS] [--resume [SESSION]] [ARG ...]
+  agent-model continue HARNESS --launcher PATH --native-binary PATH -- --from SESSION [ARG ...]
   agent-model resolve-session QUERY [--agent AGENT]
   agent-model verify-session ID --agent HARNESS
   agent-model receipt-target --agent HARNESS [--id ID] [--name NAME] [--timeout SECS]
@@ -1098,6 +1161,45 @@ def main(arguments: list[str]) -> int:
         print_usage(commands)
         return 0 if arguments else 2
     command, rest = arguments[0], arguments[1:]
+    if command == "has-from":
+        if len(rest) < 2 or rest[1] != "--":
+            raise ConfigError("has-from requires HARNESS -- ARGV")
+        return 0 if has_continuation_option(rest[0], rest[2:]) else 3
+    if command in {"continue", "prepare-startup", "validate-claude-continuation"}:
+        # Keep continuation imports off lookup and receipt paths.
+        sys.path.insert(0, str(DEFAULTS_PATH.parent))
+        from agent_continuation import (
+            ContinuationError, main as continue_main, prepare_ordinary_startup, required_binary,
+            startup_readiness, validate_claude_arguments,
+        )
+
+        if command == "continue":
+            return continue_main(rest, argument_takes_value)
+        if command == "prepare-startup":
+            if len(rest) < 4 or rest[1] != "--native-binary" or rest[3] != "--":
+                raise ConfigError("prepare-startup requires HARNESS --native-binary PATH -- ARGV")
+            try:
+                prepared = prepare_ordinary_startup(
+                    rest[0], rest[4:], argument_takes_value, OMP_CONTROL_SUBCOMMANDS | {"join", "stream"},
+                    native_binary=rest[2],
+                )
+            except (ContinuationError, OSError) as error:
+                raise ConfigError(str(error)) from error
+            sys.stdout.buffer.write(b"".join(os.fsencode(value) + b"\0" for value in prepared))
+            return 0
+        if len(rest) < 4 or rest[1] != "--native-binary" or rest[3] != "--":
+            raise ConfigError(
+                "validate-claude-continuation requires NATIVE_ID --native-binary PATH -- ARGV"
+            )
+        try:
+            request = validate_claude_arguments(rest[0], rest[4:], argument_takes_value)
+            startup_readiness(
+                required_binary("agent-loom"), "claude", request.arguments, Path.cwd(), argument_takes_value,
+                native_binary=rest[2],
+            )
+        except ContinuationError as error:
+            raise ConfigError(str(error)) from error
+        return 0
     if command in ("launch", "resolve"):
         if not rest:
             raise ConfigError(f"{command} requires a model name")

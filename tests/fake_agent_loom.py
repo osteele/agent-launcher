@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""A stand-in for `agent-loom session-name`, for tests that need session names.
+"""A stand-in for Loom name lookup and startup readiness in launcher tests.
 
 agent-loom owns its name store and the rules for reading it -- reused pids,
 stale breadcrumbs -- and tests them itself. These suites test what this repo
 does with the answer, so the stand-in answers from a table and speaks only the
-documented schemas (agent-loom-session-name/v1, agent-loom-session-names/v1).
+documented name and continuation response schemas.
 
 The table is JSON at $FAKE_AGENT_LOOM_TABLE:
   {"names": {"<session id>": {"slug", "displayName", "assignedAt"?, "project"?}},
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -32,7 +33,7 @@ def install(bin_dir: Path) -> None:
             f'@"{sys.executable}" "{script}" %*\r\n'
         )
     else:
-        (bin_dir / "agent-loom").symlink_to(script)
+        shutil.copy(script, bin_dir / "agent-loom")
 
 
 def name_record(entry: dict[str, str]) -> dict[str, str]:
@@ -50,6 +51,19 @@ def main(argv: list[str]) -> int:
         with open(table["log"], "a", encoding="utf-8") as log:
             log.write(json.dumps(argv) + "\n")
     mode = table.get("mode", "answer")
+    if mode == "answer" and argv[:3] == ["continuation", "hooks", "status"]:
+        # The fake harness records argv; it does not load the advertised file.
+        print(
+            json.dumps(
+                {
+                    "schema": "agent-loom-continuation/v1",
+                    "ok": True,
+                    "ready": table.get("startupReady", True),
+                    "startup": {"ompExtension": str(Path(__file__).resolve())},
+                }
+            )
+        )
+        return 0
     if mode == "hang":
         time.sleep(30)
         return 0
@@ -79,7 +93,17 @@ def main(argv: list[str]) -> int:
                 "sessionId": session_id,
                 **name_record(entry),
                 **(
-                    {"assignedAt": entry["assignedAt"]} if "assignedAt" in entry else {}
+                    {
+                        key: entry[key]
+                        for key in (
+                            "assignedAt",
+                            "managed",
+                            "nativeSessionId",
+                            "nativeHarness",
+                            "generation",
+                        )
+                        if key in entry
+                    }
                 ),
             }
             for session_id, entry in names.items()

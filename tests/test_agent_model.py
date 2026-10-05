@@ -529,6 +529,59 @@ model = "provider/selected-model"
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), f"codex resume {session_id}")
 
+    def test_name_resume_and_receipt_follow_confirmed_continuation_not_original_native_id(
+        self,
+    ) -> None:
+        self.write_session_name(SESSION_ID, "Continuing Heron")
+        table = json.loads(self.names_table.read_text())
+        table["names"][SESSION_ID].update(
+            {
+                "managed": True,
+                "nativeSessionId": OTHER_ID,
+                "nativeHarness": "codex",
+                "generation": 2,
+            }
+        )
+        self.names_table.write_text(json.dumps(table))
+        self.install_agentsview_router({SESSION_ID: "claude", OTHER_ID: "codex"})
+
+        resumed = self.run_model("resolve-session", "Continuing Heron")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertEqual(resumed.stdout.splitlines()[:2], [OTHER_ID, "codex"])
+        receipt = self.run_model(
+            "receipt-target", "--agent", "codex", "--name", "Continuing Heron"
+        )
+        self.assertEqual(receipt.returncode, 0, receipt.stderr)
+        self.assertEqual(receipt.stdout.strip(), "Continuing Heron")
+
+    def test_managed_name_without_native_head_never_falls_back_to_original_or_transcript_search(
+        self,
+    ) -> None:
+        self.write_session_name(SESSION_ID, "Continuing Heron")
+        table = json.loads(self.names_table.read_text())
+        table["names"][SESSION_ID].update(
+            {
+                "managed": True,
+                "nativeSessionId": None,
+                "nativeHarness": None,
+                "generation": 2,
+            }
+        )
+        self.names_table.write_text(json.dumps(table))
+        self.install_agentsview_router(
+            {SESSION_ID: "claude"},
+            found=[(f"codex:{OTHER_ID}", "2026-09-01T00:00:00Z")],
+        )
+
+        resumed = self.run_model("resolve-session", "Continuing Heron")
+        self.assertEqual(resumed.returncode, 4, resumed.stderr)
+        self.assertEqual(resumed.stdout, "")
+        receipt = self.run_model(
+            "receipt-target", "--agent", "claude", "--name", "Continuing Heron"
+        )
+        self.assertEqual(receipt.returncode, 3, receipt.stderr)
+        self.assertEqual(receipt.stdout, "")
+
     def test_an_unrecognized_name_answer_is_no_match(self) -> None:
         """Valid JSON that is not the documented object reads as no name rather
         than crashing the resume lookup."""

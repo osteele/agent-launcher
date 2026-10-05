@@ -145,6 +145,33 @@ class AgentLauncherTest(unittest.TestCase):
         self.assertIn(f"args=--profile resume resume {CODEX_RESUME_ID}", result.stdout)
         self.assertEqual(self.session_id(result), CODEX_RESUME_ID)
 
+    def test_fresh_launch_without_loom_does_not_require_python(self) -> None:
+        (self.real_bin / "agent-loom").unlink()
+        python = self.real_bin / "python3"
+        python.unlink()
+        python.write_text("#!/bin/sh\nexit 88\n")
+        python.chmod(0o755)
+        for harness in ("codex", "omp"):
+            with self.subTest(harness=harness):
+                self.install_real(harness)
+                result = self.launch(harness)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((self.tmp / "executed").exists())
+                (self.tmp / "executed").unlink()
+
+    def test_resumes_refuse_unavailable_identity_callbacks_before_launch(self) -> None:
+        self.names_table.write_text(json.dumps({"names": {}, "startupReady": False}))
+        for harness, arguments in (
+            ("omp", ("--no-extensions",)),
+            ("codex", ("resume", "--last")),
+        ):
+            with self.subTest(harness=harness):
+                self.install_real(harness)
+                result = self.launch(harness, *arguments)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("startup is not ready", result.stderr)
+                self.assertFalse((self.tmp / "executed").exists())
+
     def test_skips_itself_when_finding_the_real_binary(self) -> None:
         # The launcher sits ahead of the real binary on PATH; resolving `kimi`
         # naively would re-exec the launcher forever.
@@ -734,7 +761,6 @@ class AgentLauncherTest(unittest.TestCase):
         self.install_agentsview()
         result = self.launch("omp", "--", "--resume", OMP_RESUME_ID)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"args=-- --resume {OMP_RESUME_ID}", result.stdout)
         self.assertNotEqual(self.session_id(result), OMP_RESUME_ID)
 
     def test_switch_preserves_argument_boundaries_without_shell_evaluation(

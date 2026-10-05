@@ -1,6 +1,6 @@
 -- allium: 3
--- Scope: Agent launch, conversation selection for resume, and exit receipts.
--- Includes: Model/harness selection, interactive and unattended resume, receipts.
+-- Scope: Agent launch, native resume, cross-harness continuation, and exit receipts.
+-- Includes: Model/harness selection, continuation context and identity, receipts.
 -- Excludes: Installation, harness internals, transcript indexing, credential storage,
 -- and command execution policy (specified in command-guards.allium).
 -- Authority: Elicitation on 2026-09-23. Sections labeled baseline retain documented
@@ -458,5 +458,97 @@ surface ShellReceipt {
     provides:
         ShellPromptReturns(run)
             when run.launch.interactive and not run.launch.nested
+}
+
+-- Cross-harness continuation preserves a durable Loom identity and creates a
+-- distinct native conversation. Loom owns its run-generation transaction.
+external entity LoomIdentity {
+    id: String
+    name: String
+}
+
+external entity ContinuationRequest {
+    launch: LaunchRequest
+    query: String
+    destination: Harness
+    dry_run: Boolean
+}
+
+external entity ContinuationSource {
+    request: ContinuationRequest
+    identity: LoomIdentity
+    conversation: Conversation
+    project: String
+    offline: Boolean
+    exact: Boolean
+}
+
+entity ContinuationBundle {
+    source: ContinuationSource
+    raw_snapshot: String
+    attributed_history: String
+    bounded_context: String
+    manifest: String
+    verified: Boolean
+}
+
+rule RejectIneligibleContinuation {
+    when: source: ContinuationSource.created
+    requires: not source.request.dry_run
+    requires: not source.offline or not source.exact
+    ensures: ContinuationRejected(source.request)
+}
+
+rule InspectContinuationWithoutOwnershipChange {
+    when: bundle: ContinuationBundle.created
+    requires: bundle.source.request.dry_run
+    ensures: ShowContinuationPreview(bundle)
+    ensures: NoOwnershipMutation(bundle.source.identity)
+}
+
+rule LaunchBoundContinuation {
+    when: LoomContinuationBound(bundle, generation)
+    requires: bundle.verified
+    requires: bundle.source.offline
+    requires: bundle.source.exact
+    requires: not bundle.source.request.dry_run
+    ensures: LaunchFreshWithContext(
+        bundle.source.request.destination,
+        bundle.source.identity,
+        generation,
+        bundle
+    )
+}
+
+surface CrossHarnessContinuation {
+    facing user: Caller
+    context request: ContinuationRequest where launch.caller = user
+
+    provides:
+        ContinueFrom(request)
+
+    @guarantee ExactSourceForms
+        -- Accept a durable name, an exact Loom ID, or an exact native ID.
+        -- Ambiguous names require interactive selection; unattended selection
+        -- fails rather than taking the newest conversation.
+
+    @guarantee DestinationSelection
+        -- The model-first configured or explicitly selected harness remains
+        -- the destination, regardless of which harness owns the source.
+
+    @guarantee HistoricalContext
+        -- Preserve the complete exported source and provenance. Report bounded
+        -- preview coverage, omitted reasoning, and unreconstructed branches.
+        -- Never replay historical tools or import historical permission grants.
+
+    @guarantee DurableIdentity
+        -- Loom identity and obligations in both roles remain unchanged.
+        -- The new native conversation and execution generation are distinct.
+        -- A process-owned claim or work lease is not automatically inherited.
+
+    @guarantee LaunchFailure
+        -- Refuse missing or invalid transcript data and unsupported adapters.
+        -- No model work precedes the committed runtime identity binding.
+        -- A failed launch cancels its own reservation, never another generation.
 }
 

@@ -249,12 +249,24 @@ resume_flags() {
 # Keep native value-taking options in step with agent-model.argument_takes_value.
 argument_takes_value() {
     case "$1" in
-        --model|-m|--provider|--config|-c|--profile|--cd|-C|--resume|-r|--session|-s|-S|--conversation|--mode)
+        --model|-m|--provider|--config|--profile|--cd|-C|--resume|-r|--session|-s|-S|--conversation|--mode)
             return 0 ;;
     esac
     if [[ "$NAME" == "codex" ]]; then
         case "$1" in
-            -p|-i|--image|--enable|--disable|--remote|--remote-auth-token-env|--local-provider|--sandbox|--add-dir|-a|--ask-for-approval|--output-schema|--output-last-message|-o)
+            -c|-p|-i|--image|--enable|--disable|--remote|--remote-auth-token-env|--local-provider|--sandbox|--add-dir|-a|--ask-for-approval|--output-schema|--output-last-message|-o)
+                return 0 ;;
+        esac
+    fi
+    if [[ "$NAME" == "claude" ]]; then
+        case "$1" in
+            --agent|--agents|--append-system-prompt|--append-system-prompt-file|--system-prompt|--system-prompt-file|--settings|--setting-sources|--permission-mode|--effort|--input-format|--output-format|--json-schema|--mcp-config|--plugin-dir|--tools|--allowedTools|--allowed-tools|--disallowedTools|--disallowed-tools|--add-dir|--max-budget-usd|--max-turns|--fallback-model|--session-id)
+                return 0 ;;
+        esac
+    fi
+    if [[ "$NAME" == "omp" ]]; then
+        case "$1" in
+            --cwd|--thinking|--smol|--slow|--plan|--service-tier|--system-prompt|--system-prompt-template|--append-system-prompt|--add-dir|--session-dir|--tools|--models|--api-key|--hook|--extension|-e|--max-time|--skills|--plugin-dir|--prewalk-into|--plan-yolo-into|--approval-mode|--alias|--export)
                 return 0 ;;
         esac
     fi
@@ -266,6 +278,41 @@ argument_takes_value() {
     fi
     return 1
 }
+
+# Continuation is a launcher operation. Resolve it before choosing the native
+# executable or resetting identity; its destination remains this harness.
+continuation_skip_value=false
+continuation_value_option=""
+for continuation_argument in "$@"; do
+    if $continuation_skip_value; then
+        continuation_skip_value=false
+        if ! { [[ "$NAME" == "claude" || "$NAME" == "omp" ]] &&
+               [[ "$continuation_value_option" == "--resume" || "$continuation_value_option" == "-r" ]] &&
+               [[ "$continuation_argument" == -* ]]; }; then
+            continue
+        fi
+    fi
+    [[ "$continuation_argument" == "--" ]] && break
+    case "$continuation_argument" in
+        --from|--from=*)
+            continuation_binary="$(find_real_binary)"
+            exec "$LAUNCHER_DIR/launchers/agent-model" continue "$NAME" \
+                --launcher "$0" --native-binary "$continuation_binary" -- "$@"
+            ;;
+    esac
+    if [[ "$continuation_argument" != *=* ]] && argument_takes_value "$continuation_argument"; then
+        continuation_skip_value=true
+        continuation_value_option="$continuation_argument"
+    fi
+done
+unset continuation_skip_value continuation_argument continuation_value_option
+
+# A nested agent is a new execution, not a continuation of its caller's binding.
+if [[ "${AGENT_COMMAND_GUARDS_CONTINUATION_PID:-}" != "$$" ]]; then
+    unset AGENT_LOOM_ID AGENT_LOOM_RUN_ID AGENT_LOOM_GENERATION AGENT_LOOM_BINDING
+    unset AGENT_LOOM_HOST_PID AGENT_LOOM_HOST_START
+    unset AGENT_COMMAND_GUARDS_CONTINUATION_PID AGENT_COMMAND_GUARDS_CONTINUATION_NATIVE_ID
+fi
 
 # The session id an explicit resume argument names, or non-zero when the
 # command line names none. Each agent spells the flag differently, and the
@@ -438,6 +485,25 @@ if lookup_flags="$(resume_flags)"; then
 fi
 
 REAL_BINARY="$(find_real_binary)"
+if [[ "$NAME" == "codex" || "$NAME" == "omp" ]] &&
+   [[ "${AGENT_COMMAND_GUARDS_CONTINUATION_PID:-}" != "$$" ]] &&
+   command -v agent-loom >/dev/null 2>&1; then
+    startup_file="$(mktemp "${TMPDIR:-/tmp}/agent-startup.XXXXXX")"
+    trap 'rm -f "$startup_file"' EXIT
+    if ! "$LAUNCHER_DIR/launchers/agent-model" prepare-startup "$NAME" \
+        --native-binary "$REAL_BINARY" -- "$@" > "$startup_file"; then
+        exit 2
+    fi
+    startup_args=()
+    while IFS= read -r -d '' startup_arg; do
+        startup_args+=("$startup_arg")
+    done < "$startup_file"
+    rm -f "$startup_file"
+    trap - EXIT
+    set -- ${startup_args[@]+"${startup_args[@]}"}
+    unset startup_args startup_arg startup_file
+fi
+
 
 # OMP's updater resolves `omp` from PATH to decide which installation it owns.
 # Leave the launcher first for normal sessions, but make the resolved binary's

@@ -203,6 +203,75 @@ through `PATH`, so an installed `claude-wrapper` remains responsible for profile
 and command guards. The OMP routes use provider-qualified model selectors for
 Anthropic, Fable, Codex, Kimi Code, and the Z.AI coding plan.
 
+### Continuing in another harness
+
+`--from` starts a fresh native conversation in the selected destination harness
+while keeping the source session's Loom identity, name, mail state, and
+obligations. The source must be offline.
+
+```bash
+codex --from "Fortunate Blanket"
+codex --from e7be4b46-44c7-4e38-aa7d-476fd5e11e5a
+codex --from "Fortunate Blanket" --dry-run
+codex --from "Fortunate Blanket" "Continue with the failing integration test."
+```
+
+With the model-first shell functions, the configured destination still applies.
+Use `codex --harness own --from "Fortunate Blanket"` to select the native Codex
+harness explicitly. `--from` never changes the destination to the source's
+harness. Use `--resume` to reopen an existing native conversation.
+
+Sources can be Loom names, Loom IDs, or exact native session IDs. Ambiguous names
+require interactive selection; unattended launches require an exact match.
+An existing Loom ID follows that identity's latest confirmed native conversation.
+Use `loom:ID` or `claude:ID`, `codex:ID`, and `omp:ID` to disambiguate.
+An older native conversation cannot take the identity back from its successor.
+Claude, Codex, and OMP have continuation adapters. Other source or destination
+harnesses are refused rather than launched without a verified identity binding.
+Native resume/fork options cannot be combined with `--from`.
+
+The launcher requires Python 3.11+, AgentsView, and an agent-loom installation
+with the continuation API. It checks the transcript and project before launch
+and prints the source, destination, project, and private transcript-bundle path.
+The source project's directory is the default; `--cd DIR` selects an explicit
+override. Project mail stays in its original project spool; an override does not
+move or replay it. `--dry-run` inspects transcript coverage, eligibility, and
+startup readiness without reserving or changing ownership.
+
+Install the native lifecycle callbacks for Claude or Codex before using that
+destination:
+
+```sh
+agent-loom continuation hooks install --harness codex --project /path/to/project --native-binary /path/to/native/codex --json
+agent-loom continuation hooks install --harness claude --project /path/to/project --native-binary /path/to/native/claude --json
+```
+
+Installation preserves other hooks and trusts only Loom's exact hook definitions.
+Launches check readiness without granting trust. OMP loads Loom's packaged
+startup extension explicitly, including when extension discovery is disabled.
+
+When `agent-loom` is on `PATH`, Codex and OMP startup preparation requires Python
+3.11+. Ordinary OMP conversations and native Claude/Codex resumes also require
+Loom's continuation API and ready startup callbacks. OMP can resume automatically,
+so its check applies even without a resume flag. These launches stop if readiness
+cannot be verified; they do not bypass the identity fence. Update agent-loom
+together with the launchers. Ordinary launches without agent-loom remain available;
+`--from` always requires it.
+
+Bundles live under
+`${XDG_STATE_HOME:-~/.local/state}/agent-command-guards/continuations/`.
+They contain the raw AgentsView export, attributed message history, a bounded
+context preview, and a manifest with coverage and content hashes. Historical
+tools and permission settings are evidence, not commands or permission grants.
+The preview reports truncation and retains branch metadata in the full history.
+Earlier bundles remain available through continuation lineage.
+
+The destination uses a new native conversation ID. Session obligations retain
+their existing IDs and both ownership roles; they are not copied or recreated.
+Process-owned claims and work leases require their own recovery or transfer.
+Live or unverifiable predecessors, failed exports, incompatible Loom versions,
+and competing takeovers stop the launch.
+
 ### CPU priority
 
 The launcher starts the agent under `nice -n 5`, which the agent's whole process
