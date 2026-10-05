@@ -203,7 +203,7 @@ through `PATH`, so an installed `claude-wrapper` remains responsible for profile
 and command guards. The OMP routes use provider-qualified model selectors for
 Anthropic, Fable, Codex, Kimi Code, and the Z.AI coding plan.
 
-### Continuing in another harness
+### Continuing in a fresh conversation
 
 `--from` starts a fresh native conversation in the selected destination harness
 while keeping the source session's Loom identity, name, mail state, and
@@ -220,6 +220,21 @@ With the model-first shell functions, the configured destination still applies.
 Use `codex --harness own --from "Fortunate Blanket"` to select the native Codex
 harness explicitly. `--from` never changes the destination to the source's
 harness. Use `--resume` to reopen an existing native conversation.
+
+The source and destination can use the same harness. For OMP-to-Claude or
+Claude-to-Claude continuation, stop the source agent, then run:
+
+```sh
+command claude --from SOURCE --dry-run
+command claude --from SOURCE
+```
+
+Replace `SOURCE` with the source session UUID or a quoted Loom name.
+`command claude` bypasses model-first shell functions and selects the Claude wrapper.
+For a Claude compaction loop, use this fresh-conversation path instead of
+`--resume`. It reads bounded historical context and keeps the full transcript
+export available in the bundle. It does not repair Claude's compaction behavior,
+and it requires a readable source transcript.
 
 Sources can be Loom names, Loom IDs, or exact native session IDs. Ambiguous names
 require interactive selection; unattended launches require an exact match.
