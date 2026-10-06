@@ -453,10 +453,32 @@ def sessions_named(query: str) -> list[SessionMatch]:
     return _ranked(matches)
 
 
+def fts_phrase(query: str) -> str:
+    """The query as one FTS5 phrase, so it matches only where its words are contiguous.
+
+    The `--fts` index is tokenized: an unquoted query matches any message
+    holding its words anywhere, which ranks unrelated sessions alongside -- or,
+    once the real one is filtered out, instead of -- the transcript the text
+    was copied from. Inside a phrase, FTS operators are literal words and a
+    double quote is escaped by doubling it.
+    """
+    return '"' + query.replace('"', '""') + '"'
+
+
 def sessions_containing(query: str) -> Resolution:
-    """Search message text, never tool arguments/results or a harness-only index."""
+    """Search message text, never tool arguments/results or a harness-only index.
+
+    AgentsView leaves one-shot and automated sessions out of search by default.
+    A session started by a single prompt and left to run -- a delegated or
+    autonomous agent -- is one-shot by its count, and is often exactly the one
+    a remembered line of its output is meant to reopen.
+    """
     payload, answered = _agentsview_query(
-        ["session", "search", query, "--fts", "--limit", "50"], timeout=10.0
+        [
+            "session", "search", fts_phrase(query), "--fts",
+            "--include-one-shot", "--include-automated", "--limit", "50",
+        ],
+        timeout=10.0,
     )
     if not isinstance(payload, dict) or not isinstance(payload.get("matches"), list):
         return Resolution([], False)

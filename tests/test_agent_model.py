@@ -452,11 +452,16 @@ model = "provider/selected-model"
         found: list[tuple[str, str]] | None = None,
         witness: Path | None = None,
         indexed: list[tuple[str, str, str]] | None = None,
+        one_shot: list[tuple[str, str]] | None = None,
+        scattered: list[tuple[str, str]] | None = None,
     ) -> None:
         """A fake AgentsView: `sessions` maps id to agent, `found` is a search.
 
         Each entry of `found` is one (canonical id, timestamp) the transcript
-        search reports. Each entry of `indexed` is one (canonical id,
+        search reports. `one_shot` hits are reported only when the search
+        passes `--include-one-shot`, as AgentsView hides one-shot sessions by
+        default; `scattered` hits hold the query's words but not the phrase,
+        so they are reported only for an unquoted (tokenized) query. Each entry of `indexed` is one (canonical id,
         started_at, cwd) that `session list` reports -- the sessions a name
         recorded against a launcher-minted id is joined against. `witness`
         records every call, so a test can assert the lookup was never reached at
@@ -487,20 +492,34 @@ model = "provider/selected-model"
             )
             for session_id, agent in (sessions or {}).items()
         }
-        matches = json.dumps(
-            {
-                "matches": [
-                    {
-                        "session_id": canonical,
-                        "project": "p",
-                        "agent": canonical.split(":", 1)[0],
-                        "timestamp": timestamp,
-                    }
-                    for canonical, timestamp in (found or [])
-                ],
-                "next_cursor": 0,
-            }
-        )
+
+        def matches(hits: list[tuple[str, str]]) -> str:
+            return json.dumps(
+                {
+                    "matches": [
+                        {
+                            "session_id": canonical,
+                            "project": "p",
+                            "agent": canonical.split(":", 1)[0],
+                            "timestamp": timestamp,
+                        }
+                        for canonical, timestamp in hits
+                    ],
+                    "next_cursor": 0,
+                }
+            )
+
+        results = {
+            (include_one_shot, phrase): matches(
+                [
+                    *(found or []),
+                    *((one_shot or []) if include_one_shot else []),
+                    *([] if phrase else (scattered or [])),
+                ]
+            )
+            for include_one_shot in (False, True)
+            for phrase in (False, True)
+        }
         script = ["#!/bin/sh"]
         if witness is not None:
             script.append(f"printf '%s\\n' \"$*\" >> {witness}")
@@ -511,7 +530,17 @@ model = "provider/selected-model"
             script.append(f"      {session_id}) printf '%s' '{document}' ;;")
         script.append('      *) echo "fatal: session $3 not found" >&2; exit 1 ;;')
         script.append("    esac ;;")
-        script.append(f"  search) printf '%s' '{matches}' ;;")
+        script.append("  search)")
+        script.append(
+            '    case " $* " in *" --include-one-shot "*) one_shot=1 ;; *) one_shot=0 ;; esac'
+        )
+        script.append('    case "$3" in \\"*) phrase=1 ;; *) phrase=0 ;; esac')
+        script.append('    case "$one_shot$phrase" in')
+        for (include_one_shot, phrase), document in results.items():
+            script.append(
+                f"      {int(include_one_shot)}{int(phrase)}) printf '%s' '{document}' ;;"
+            )
+        script.append("    esac ;;")
         script.append(f"  list) printf '%s' '{listed}' ;;")
         script.append("  *) exit 1 ;;")
         script.append("esac")
@@ -616,6 +645,28 @@ model = "provider/selected-model"
             result.stdout.strip(),
             f"omp --model=zai/glm-5.3-flash --resume {session_id}",
         )
+
+    def test_transcript_text_finds_a_one_shot_session_over_newer_scattered_words(
+        self,
+    ) -> None:
+        # A delegated omp session ran from one prompt, so AgentsView counts it
+        # one-shot; a newer agy session holds the query's words but not the
+        # phrase. The phrase must reopen the omp session.
+        session_id = "01a10e91-f5df-71b5-b828-a840c17cf77c"
+        decoy = "948e1169-f3e5-42b9-a6fc-2e3ab3b410c1"
+        self.install_agentsview_router(
+            one_shot=[(f"omp:{session_id}", "2026-10-06T09:05:22.967Z")],
+            scattered=[(f"antigravity-cli:{decoy}", "2026-10-07T12:22:56.728Z")],
+        )
+        result = self.run_model(
+            "resolve", "glm", "--resume", "correlate only a durably recorded offer"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            f"omp --model=zai/glm-5.3-flash --resume {session_id}",
+        )
+        self.assertNotIn(decoy, result.stderr)
 
     def test_transcript_text_selects_the_harness_that_owns_the_session(self) -> None:
         session_id = "01a02c18-042f-7950-8d9a-7d88b50c8cab"
