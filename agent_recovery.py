@@ -352,7 +352,8 @@ def notice_unended(
     except (ContinuationError, OSError) as error:
         print(f"agent-model: could not check for unended sessions: {error}", file=sys.stderr)
         return
-    passed_over = [run for run in runs if run.native_id != newest.stem]
+    # Compare transcripts, not names: OMP's carry a date ahead of the session ID.
+    passed_over = [run for run in runs if run.transcript.resolve() != newest.resolve()]
     if passed_over:
         names = "; ".join(run.label for run in passed_over)
         print(

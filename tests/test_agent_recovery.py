@@ -241,6 +241,20 @@ class RecoverTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
 
+    def test_omp_continue_notice_is_silent_when_the_unended_session_is_newest(self) -> None:
+        # OMP names a transcript `<date>_<id>.jsonl`, so the file name is not the ID.
+        sessions = self.home / ".omp" / "agent" / "sessions" / "-project"
+        sessions.mkdir(parents=True)
+        older = sessions / f"2026-10-06_{OTHER}.jsonl"
+        older.write_text("{}\n")
+        os.utime(older, (1, 1))
+        (sessions / f"2026-10-07_{DEAD}.jsonl").write_text("{}\n")
+        self.unended(DEAD, "Swift Banjo", transcript=False)
+        self.table["unended"][0]["harness"] = "omp"  # type: ignore[index]
+        result = self.agent_model("notice-unended", "omp", "--", "--continue")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+
     def test_notice_does_not_query_loom_without_continue(self) -> None:
         self.unended(DEAD, "Swift Banjo")
         result = self.agent_model("notice-unended", "claude", "--", "--model", "--continue")
