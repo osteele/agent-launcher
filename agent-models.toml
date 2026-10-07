@@ -19,7 +19,7 @@ version = 1
 home = "claude"
 default = "omp"
 routes.claude = {}
-routes.omp = { model = "anthropic/claude-opus-5" }
+routes.omp = { model = "anthropic/claude-opus-5-5" }
 
 [commands.fable]
 home = "claude"

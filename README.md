@@ -203,6 +203,10 @@ through `PATH`, so an installed `claude-wrapper` remains responsible for profile
 and command guards. The OMP routes use provider-qualified model selectors for
 Anthropic, Fable, Codex, Kimi Code, and the Z.AI coding plan.
 
+The shipped OMP routes select Claude Opus 5.5 for `claude` and GPT-6 Astra for
+interactive `codex` launches. Native Claude model defaults come from the
+selected `claude-wrapper` profile.
+
 ### Continuing in a fresh conversation
 
 `--from` starts a fresh native conversation in the selected destination harness
