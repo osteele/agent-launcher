@@ -215,6 +215,40 @@ class LauncherSetupTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, str(expected))
 
+    def test_env_file_keeps_a_hostile_guards_path_as_data(self) -> None:
+        # The path comes from the caller's environment; sourcing the generated
+        # file must reproduce it byte for byte and execute none of it.
+        marker = self.tmp / "executed"
+        hostile = f"{self.tmp}/it's $(touch {marker}) `touch {marker}` $HOME"
+        self.environment["AGENT_COMMAND_GUARDS_DIR"] = hostile
+        self.assertEqual(self.run_setup().returncode, 0)
+        env_file = self.home / ".config" / "agent-launchers" / "env"
+        for shell in ("/bin/sh", "/bin/bash", "/bin/zsh"):
+            with self.subTest(shell=shell):
+                result = subprocess.run(
+                    [shell, *(["-f"] if shell.endswith("zsh") else []), "-c",
+                     f'. "{env_file}"; printf "%s" "$AGENT_COMMAND_GUARDS_DIR"'],
+                    capture_output=True, check=False,
+                    env={"HOME": str(self.home), "PATH": "/usr/bin:/bin"},
+                    stdin=subprocess.DEVNULL, text=True, timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, hostile)
+                self.assertFalse(marker.exists())
+
+    def test_install_keeps_other_links_into_the_previous_repository(self) -> None:
+        # Only the old launcher links migrate; any other link into that
+        # repository is someone's own binary and is refused as before.
+        self.bin_dir.mkdir()
+        own = self.tmp / "agent-command-guards" / "venv" / "bin" / "codex"
+        own.parent.mkdir(parents=True)
+        own.write_text("#!/bin/sh\n")
+        (self.bin_dir / "codex").symlink_to(own)
+        result = self.run_setup()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Refusing to replace", result.stderr)
+        self.assertEqual(os.readlink(self.bin_dir / "codex"), str(own))
+
     def test_install_refuses_to_replace_a_foreign_binary(self) -> None:
         self.bin_dir.mkdir(parents=True)
         foreign = self.bin_dir / "opencode"

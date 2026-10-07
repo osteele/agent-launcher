@@ -170,6 +170,10 @@ if [[ ! -x "$SHADOW_DIR/git" ]]; then
     printf '         Check out agent-command-guards beside this repository, or set AGENT_COMMAND_GUARDS_DIR.\n' >&2
 fi
 
+# The guards directory can come from the caller's environment, so it enters the
+# generated file as a single-quoted literal that no shell will expand.
+QUOTED_SHADOW_DIR="'$(printf '%s' "$SHADOW_DIR" | sed "s/'/'\\\\''/g")'"
+
 if $DRY_RUN; then
     printf 'Would create %s and prepend %s to PATH\n' "$ENV_FILE" "$LAUNCHER_DIR"
 else
@@ -181,7 +185,9 @@ export PATH="$LAUNCHER_DIR:\$PATH"
 # Where the command guards live, as resolved when setup ran, so a checkout
 # outside the sibling default survives into later shells. An inherited value
 # wins: inside an agent session it names the directory the launcher activated.
-: "\${AGENT_COMMAND_GUARDS_DIR:=$SHADOW_DIR}"
+if [ -z "\${AGENT_COMMAND_GUARDS_DIR:-}" ]; then
+    AGENT_COMMAND_GUARDS_DIR=$QUOTED_SHADOW_DIR
+fi
 export AGENT_COMMAND_GUARDS_DIR
 
 # agy resolves ahead of the launcher directory and cannot be intercepted by
@@ -209,7 +215,7 @@ agy() { command "$LAUNCHER_DIR/agy" "\$@"; }
 # The guards directory is only on PATH inside an agent session, so this is a
 # no-op in an ordinary shell.
 agent_guards_restore() {
-    guards_dir="\${AGENT_COMMAND_GUARDS_DIR:-$SHADOW_DIR}"
+    guards_dir="\$AGENT_COMMAND_GUARDS_DIR"
     case ":\$PATH:" in
         *":\$guards_dir:"*) ;;
         *) unset guards_dir; return 0 ;;
@@ -266,9 +272,11 @@ for agent in "${AGENTS[@]}"; do
         printf 'Would link %s to %s/%s\n' "$link" "$LAUNCHER_DIR" "$agent"
         continue
     fi
-    # A link into agent-command-guards is this launcher's previous home, before
-    # it moved to its own repository; it may already dangle. Replace it.
-    if [[ -L "$link" && "$(readlink "$link")" == */agent-command-guards/* ]]; then
+    # A link to this launcher's previous home in agent-command-guards, before it
+    # moved to its own repository, may already dangle. Replace it, and no other.
+    legacy_target="$(readlink "$link" 2>/dev/null || true)"
+    if [[ -L "$link" && ( "$legacy_target" == */agent-command-guards/launchers/"$agent"
+                          || "$legacy_target" == */agent-command-guards/agent-launcher ) ]]; then
         rm "$link"
         printf 'Removed %s, which pointed into agent-command-guards\n' "$link"
     fi
