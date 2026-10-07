@@ -901,17 +901,21 @@ class AgentLauncherTest(unittest.TestCase):
 
 
 # A stand-in for claude-wrapper: it does its setup once per process, then execs
-# the first `claude` on PATH after itself, as the real wrapper does, and
-# answers the native-binary query the launcher may ask it.
+# the first `claude` on PATH after its own last entry, as the real wrapper does,
+# and answers the native-binary query the launcher may ask it.
 FAKE_CLAUDE_WRAPPER = """#!/bin/bash
 # agent-launcher-protocol: native-binary
 self="$(realpath "$0")"
 next_claude() {
-    local seen=false candidate
-    while IFS= read -r candidate; do
-        if [[ "$(realpath "$candidate")" == "$self" ]]; then seen=true; continue; fi
-        if $seen; then printf '%s\\n' "$candidate"; return 0; fi
-    done < <(which -a claude)
+    local candidates=() candidate index start=-1
+    while IFS= read -r candidate; do candidates+=("$candidate"); done < <(which -a claude)
+    for index in "${!candidates[@]}"; do
+        [[ "$(realpath "${candidates[$index]}")" == "$self" ]] && start=$index
+    done
+    for ((index = start + 1; index < ${#candidates[@]}; index++)); do
+        [[ "$(realpath "${candidates[$index]}")" == "$self" ]] && continue
+        printf '%s\\n' "${candidates[$index]}"; return 0
+    done
     return 1
 }
 if [[ "${1:-}" == wrapper && "${2:-}" == native-binary ]]; then
@@ -985,6 +989,20 @@ class ClaudeChainTest(unittest.TestCase):
         second.mkdir()
         (second / "claude").symlink_to(LAUNCHER)
         self.use_path(LAUNCHER_DIR, self.wrapper_dir, second, self.real_bin)
+        result = self.launch("claude", "-p", "hello")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("args=-p hello"), 1)
+        self.assertEqual(self.wrapper_setups(), 1)
+
+    def test_interleaved_launcher_and_wrapper_entries_terminate(self) -> None:
+        # Repeated shell setup lists both layers twice, interleaved.
+        second_launcher = self.tmp / "second-launcher"
+        second_wrapper = self.tmp / "second-wrapper"
+        second_launcher.mkdir()
+        second_wrapper.mkdir()
+        (second_launcher / "claude").symlink_to(LAUNCHER)
+        (second_wrapper / "claude").symlink_to(self.wrapper_dir / "claude")
+        self.use_path(LAUNCHER_DIR, self.wrapper_dir, second_launcher, second_wrapper, self.real_bin)
         result = self.launch("claude", "-p", "hello")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count("args=-p hello"), 1)

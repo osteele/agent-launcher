@@ -303,5 +303,5 @@ add_block "$HOME/.bashrc"
 
 if ! $DRY_RUN; then
     printf 'Setup complete. Restart the shell or run: . %s\n' "$ENV_FILE"
-    printf 'Then verify with: kimi wrapper doctor && opencode wrapper doctor && omp wrapper doctor\n'
+    printf 'Then verify with: claude launcher doctor && omp launcher doctor\n'
 fi
