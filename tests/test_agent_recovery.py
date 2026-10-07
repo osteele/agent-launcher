@@ -107,6 +107,32 @@ class RecoverTest(unittest.TestCase):
                        "--harness", "claude", "--json"],
                       [json.loads(line) for line in self.log.read_text().splitlines()])
 
+    def test_a_forwarded_directory_selects_the_project(self) -> None:
+        # Invoked elsewhere, --cd names the project whose sessions are asked for.
+        self.unended(DEAD, "Swift Banjo")
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        self.table_path.write_text(json.dumps(self.table))
+        result = subprocess.run(
+            [str(AGENT_MODEL), "recover", "claude", "--launcher", str(self.launcher),
+             "--native-binary", "/usr/bin/true", "--", "--recover", "--cd", str(self.project)],
+            capture_output=True, check=False, cwd=elsewhere, env=self.environment,
+            stdin=subprocess.DEVNULL, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.launched(result), ["--resume", DEAD, "--cd", str(self.project)])
+
+    def test_model_first_claude_routes_recovery_to_claude(self) -> None:
+        # The shipped default sends `claude` to another harness; recovery cannot.
+        self.environment["XDG_CONFIG_HOME"] = str(self.tmp / "config")
+        result = self.agent_model("resolve", "claude", "--recover=Swift Banjo")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split()[0], "claude")
+        self.assertIn("--recover=", result.stdout)
+        refused = self.agent_model("resolve", "claude", "--harness", "omp", "--recover")
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("cannot recover", refused.stderr)
+
     def test_none_unended_refuses_rather_than_continuing(self) -> None:
         result = self.recover("--recover")
         self.assertEqual(result.returncode, 2)

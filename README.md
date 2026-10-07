@@ -281,7 +281,10 @@ falls back to `--continue`. It cannot be combined with `--resume`, `--continue`,
 `--from`, `--fork-session`, or `--session-id`, and a process scan that Loom
 cannot trust refuses rather than reporting no candidates.
 
-The Claude wrapper routes `--recover` here. Recovery covers Claude only.
+The Claude wrapper routes `--recover` here. Recovery covers Claude only, so the
+model-first `claude` function sends it to Claude even when its configured default
+is another harness; `--harness` naming another harness is refused. A forwarded
+`--cd DIR` selects that directory's sessions instead of the current one's.
 
 `agent-model notice-unended claude -- ARGV` prints one line before a
 `--continue` launch when a session that died here is not the one `--continue`

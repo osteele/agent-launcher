@@ -846,6 +846,15 @@ def resolve(
         raise ConfigError(f"unknown model {model!r}; expected {', '.join(commands)}")
     explicit, forwarded = parse_harness_option(commands, model, arguments)
     invocation_harness = explicit or defaults_with_sources(commands)[model][0]
+    if has_continuation_option(invocation_harness, forwarded, "--recover"):
+        # Recovery reopens a dead Claude conversation, so the configured default
+        # harness cannot apply; only an explicit other harness is an error.
+        if explicit is not None and explicit != "claude":
+            raise ConfigError(f"--recover reopens Claude conversations; {explicit} cannot recover one")
+        invocation = resume_model_route(
+            commands, model, "claude", "claude", interactive_invocation("claude", forwarded),
+        )
+        return [*invocation, *forwarded], "claude"
     if has_continuation_option(invocation_harness, forwarded):
         # --from fixes the destination. Its parser rejects conflicting native
         # modes before any resume lookup can switch harnesses.

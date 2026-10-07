@@ -113,6 +113,33 @@ def parse_recover(
     return RecoverRequest(selector, dry_run, tuple(kept))
 
 
+def effective_project(
+    harness: str, arguments: list[str] | tuple[str, ...], takes_value: Callable[[str, str], bool]
+) -> Path:
+    """The directory the resumed conversation runs in: a forwarded --cd, else the cwd."""
+    project = Path.cwd()
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            break
+        flag, separator, value = argument.partition("=")
+        if flag in {"--cwd", "--cd", "-C"}:
+            if not separator:
+                if index + 1 >= len(arguments):
+                    raise ContinuationError(f"{flag} requires a value")
+                index += 1
+                value = arguments[index]
+            project = Path(value).expanduser()
+        elif not separator and takes_value(harness, argument):
+            index += 1
+        index += 1
+    try:
+        return project.resolve(strict=True)
+    except OSError as error:
+        raise ContinuationError(f"project directory does not exist: {project}") from error
+
+
 def claude_transcript(native_id: str) -> Path | None:
     root = Path.home() / ".claude" / "projects"
     try:
@@ -242,7 +269,7 @@ def recover(arguments: list[str], takes_value: Callable[[str, str], bool]) -> in
     if not launcher.is_file() or not os.access(launcher, os.X_OK):
         raise ContinuationError(f"launcher is not executable: {launcher}")
     request = parse_recover(harness, arguments[6:], takes_value)
-    project = Path.cwd().resolve()
+    project = effective_project(harness, request.arguments, takes_value)
     runs, missing = unended_runs(required_binary("agent-loom"), project, harness)
     for native_id in missing:
         print(f"agent-model: skipping unended {native_id}: no transcript to resume", file=sys.stderr)
@@ -290,7 +317,8 @@ def notice_unended(
         return
     try:
         runs, _ = unended_runs(
-            required_binary("agent-loom"), Path.cwd().resolve(), harness, timeout=NOTICE_TIMEOUT
+            required_binary("agent-loom"), effective_project(harness, argv, takes_value),
+            harness, timeout=NOTICE_TIMEOUT,
         )
         if not runs:
             return
