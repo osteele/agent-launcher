@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -245,6 +246,30 @@ class LauncherSetupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Refusing to replace", result.stderr)
         self.assertEqual(os.readlink(self.bin_dir / "codex"), str(own))
+
+    def test_checkout_path_with_a_quote_keeps_startup_files_parseable(self) -> None:
+        # The not-configured hint names the checkout, which may contain a quote.
+        checkout = self.tmp / "it's work" / "agent-launcher"
+        checkout.mkdir(parents=True)
+        for name in ("agent-launcher", "launchers", "shell"):
+            source = REPO / name
+            if source.is_dir():
+                shutil.copytree(source, checkout / name, symlinks=True)
+            else:
+                shutil.copy2(source, checkout / name)
+        self.seed_rc_files()
+        setup = checkout / "launchers" / "setup"
+        first = subprocess.run([str(setup)], capture_output=True, check=False, env=self.environment,
+                               stdin=subprocess.DEVNULL, text=True, timeout=30)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        for shell, rc in (("/bin/bash", ".bashrc"), ("/bin/zsh", ".zshrc")):
+            with self.subTest(rc=rc):
+                parsed = subprocess.run([shell, "-n", str(self.home / rc)],
+                                        capture_output=True, check=False, text=True, timeout=30)
+                self.assertEqual(parsed.returncode, 0, parsed.stderr)
+        second = subprocess.run([str(setup)], capture_output=True, check=False, env=self.environment,
+                                stdin=subprocess.DEVNULL, text=True, timeout=30)
+        self.assertIn(f"Already configured: {self.home / '.zshrc'}", second.stdout)
 
     def test_install_refuses_to_replace_a_foreign_binary(self) -> None:
         self.bin_dir.mkdir(parents=True)

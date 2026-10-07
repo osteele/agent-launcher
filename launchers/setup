@@ -11,7 +11,8 @@ set -euo pipefail
 
 LAUNCHER_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$LAUNCHER_DIR/.." && pwd)"
-LAUNCHER_TARGET="$REPO_DIR/agent-launcher"
+# Resolved, because each link is compared by its own resolved path.
+LAUNCHER_TARGET="$(realpath "$REPO_DIR/agent-launcher")"
 SHADOW_DIR="${AGENT_COMMAND_GUARDS_DIR:-$(dirname "$REPO_DIR")/agent-command-guards/shadows}"
 EPILOGUE_ZSH="$REPO_DIR/shell/epilogue.zsh"
 PATH_ORDER_ZSH="$REPO_DIR/shell/path-order.zsh"
@@ -21,6 +22,8 @@ BIN_DIR="${AGENT_LAUNCHER_BIN_DIR:-$HOME/bin}"
 BLOCK_START="# >>> agent-launchers initialize >>>"
 BLOCK_END="# <<< agent-launchers initialize <<<"
 BLOCK_SOLUTION="Agent launchers are not configured; run $LAUNCHER_DIR/setup"
+# The hint as a single-quoted shell literal: the checkout path may contain a quote.
+QUOTED_SOLUTION="'$(printf '%s' "$BLOCK_SOLUTION" | sed "s/'/'\\\\''/g")'"
 # Linked into BIN_DIR. claude is served from launchers/ on PATH only: a wrapper
 # layer for claude may follow it on PATH, and a second launcher entry there
 # could hand a claude launch back to the wrapper it came from.
@@ -89,7 +92,7 @@ add_block() {
     # text for the interactive files, and the guarded source line for the quiet
     # one. Matching on the warning alone would rewrite the quiet block on every
     # run, since it deliberately has no warning to find.
-    local marker="$BLOCK_SOLUTION"
+    local marker="$QUOTED_SOLUTION"
     [[ "$quiet" == quiet ]] && marker='[ -f "$HOME/.config/agent-launchers/env" ] && .'
     if grep -qF "$BLOCK_START" "$file"; then
         if grep -qF "$marker" "$file"; then
@@ -119,7 +122,7 @@ add_block() {
             'if [ -f "$HOME/.config/agent-launchers/env" ]; then' \
             '    . "$HOME/.config/agent-launchers/env"' \
             'else' \
-            "    printf '%s\\n' '$BLOCK_SOLUTION' >&2" \
+            "    printf '%s\\n' $QUOTED_SOLUTION >&2" \
             'fi' \
             "$BLOCK_END" >> "$file"
     fi

@@ -925,6 +925,8 @@ class AgentLauncherTest(unittest.TestCase):
 # a first run, after its last on re-entry -- and answers the native-binary query.
 FAKE_CLAUDE_WRAPPER = """#!/bin/bash
 # agent-launcher-protocol: native-binary
+# agent-launcher-protocol: resume-fence
+# agent-launcher-protocol: receipt
 self="$(realpath "$0")"
 next_claude() {
     local candidates=() candidate index start=-1
