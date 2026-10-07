@@ -271,6 +271,25 @@ class LauncherSetupTest(unittest.TestCase):
                                 stdin=subprocess.DEVNULL, text=True, timeout=30)
         self.assertIn(f"Already configured: {self.home / '.zshrc'}", second.stdout)
 
+    def test_checkout_under_home_is_named_from_tilde(self) -> None:
+        # Startup files can be shared across machines whose home paths differ.
+        checkout = self.home / "code" / "agent-launcher"
+        checkout.mkdir(parents=True)
+        for name in ("agent-launcher", "launchers", "shell"):
+            source = REPO / name
+            if source.is_dir():
+                shutil.copytree(source, checkout / name, symlinks=True)
+            else:
+                shutil.copy2(source, checkout / name)
+        self.seed_rc_files()
+        result = subprocess.run([str(checkout / "launchers" / "setup")], capture_output=True,
+                                check=False, env=self.environment, stdin=subprocess.DEVNULL,
+                                text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        zshrc = (self.home / ".zshrc").read_text()
+        self.assertIn("run ~/code/agent-launcher/launchers/setup'", zshrc)
+        self.assertNotIn(str(self.home), zshrc)
+
     def test_install_refuses_to_replace_a_foreign_binary(self) -> None:
         self.bin_dir.mkdir(parents=True)
         foreign = self.bin_dir / "opencode"

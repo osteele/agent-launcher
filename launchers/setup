@@ -21,7 +21,11 @@ ENV_FILE="$CONFIG_DIR/env"
 BIN_DIR="${AGENT_LAUNCHER_BIN_DIR:-$HOME/bin}"
 BLOCK_START="# >>> agent-launchers initialize >>>"
 BLOCK_END="# <<< agent-launchers initialize <<<"
-BLOCK_SOLUTION="Agent launchers are not configured; run $LAUNCHER_DIR/setup"
+# Written into startup files that may be shared between machines and accounts
+# through a dotfiles repository, so a checkout under $HOME is named from ~.
+BLOCK_SETUP_PATH="$LAUNCHER_DIR/setup"
+[[ "$BLOCK_SETUP_PATH" == "$HOME"/* ]] && BLOCK_SETUP_PATH="~/${BLOCK_SETUP_PATH#"$HOME"/}"
+BLOCK_SOLUTION="Agent launchers are not configured; run $BLOCK_SETUP_PATH"
 # The hint as a single-quoted shell literal: the checkout path may contain a quote.
 QUOTED_SOLUTION="'$(printf '%s' "$BLOCK_SOLUTION" | sed "s/'/'\\\\''/g")'"
 # Linked into BIN_DIR. claude is served from launchers/ on PATH only: a wrapper
