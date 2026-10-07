@@ -10,16 +10,52 @@ then `exec`s the agent. Around that core it adds model-first shell commands,
 `--resume` by session name or transcript text, continuation across harnesses,
 and an exit receipt that names the session that just ended.
 
-This is personal tooling, written against one machine's set of agents and
-services:
+It was written for one machine's set of agents and services, and depends on
+some of them:
 
 | Dependency | Used for | Without it |
 | --- | --- | --- |
 | [agent-command-guards](https://github.com/osteele/agent-command-guards), checked out beside this repository | The command guards each session runs under | Every launch warns that the session runs unguarded. If it lives elsewhere, run setup with `AGENT_COMMAND_GUARDS_DIR` set to its `shadows/` directory; setup records it in the shell environment it writes. A launch from a process that never read that environment still looks beside this checkout. |
-| Python 3.11+ | `launchers/agent-model` | Model-first commands and resume resolution fail |
+| Python 3.11+ | `launchers/agent-model` | Model-first commands and resume resolution fail; with agent-loom on `PATH`, every `claude`, `codex`, and `omp` launch fails |
 | [agent-loom](https://github.com/osteele/agent-loom) | Session names, for receipts and resume by name | Receipts and resume fall back to native IDs |
-| AgentsView | Resume by transcript text; cross-harness continuation | Only exact IDs and names resolve |
-| claude-wrapper | Claude's profiles, providers, proxy, and receipt, behind `launchers/claude` | `launchers/claude` execs the native Claude binary directly |
+| [AgentsView](https://www.agentsview.io/) (`brew install --cask agentsview`) | Resume by transcript text; cross-harness continuation | Only exact IDs and names resolve; `--from` is unavailable |
+
+## Status
+
+Used daily on macOS with zsh; bash works with fewer features (no exit receipts).
+CI also runs on Linux, and on Windows for the portable Python parts; the
+launchers themselves need a POSIX shell. There are no tagged releases: install
+from a checkout.
+
+## Getting started
+
+```bash
+git clone https://github.com/osteele/agent-command-guards.git
+git clone https://github.com/osteele/agent-launcher.git
+cd agent-launcher
+./launchers/setup
+exec "$SHELL" -l                      # or: . ~/.config/agent-launchers/env
+command codex launcher doctor         # name any agent CLI you have installed
+```
+
+Cloning agent-command-guards beside this repository is what makes sessions
+guarded; without it, launches still work and say they are unguarded. A healthy
+check reads like this, and the two `Git shadow` and `UV RAM guard` lines are the
+ones that confirm the guards:
+
+```
+codex Launcher Health Check
+
+OK   Launcher: …/agent-launcher/agent-launcher
+OK   Real codex: /opt/homebrew/bin/codex
+OK   Git shadow: …/agent-command-guards/shadows/git
+OK   UV RAM guard: …/agent-command-guards/shadows/uv with …/with-limits
+OK   Zsh bridge: …/agent-launcher/launchers/shell-init
+OK   Launcher is first on PATH
+```
+
+Inside a launched session, `command -v git` should name
+`…/agent-command-guards/shadows/git`.
 
 ## Installation
 
@@ -34,9 +70,12 @@ that agent needs the Zsh bridge; the rest is shared.
 ```
 
 Setup links `~/bin/kimi`, `~/bin/opencode`, `~/bin/codex`, `~/bin/omp`, and
-`~/bin/agy` to the launchers, and adds a managed block to `~/.zshenv`, `~/.zshrc`, and `~/.bashrc` that prepends
+`~/bin/agy` to the launchers, and adds a managed block to whichever of
+`~/.zshenv`, `~/.zshrc`, and `~/.bashrc` already exist. The block prepends
 `launchers/` to `PATH` and, inside an agent session, restores the guards to the
-front of it. That subdirectory holds only the launchers, so making it globally
+front of it. Setup creates none of those files: if your shell's is missing,
+create it before running setup, or source `~/.config/agent-launchers/env` from
+your own startup file. That subdirectory holds only the launchers, so making it globally
 visible makes nothing else a command. Setup warns when it cannot find the guards
 beside this checkout or at `AGENT_COMMAND_GUARDS_DIR`. Verify with:
 
@@ -46,34 +85,39 @@ command kimi launcher doctor
 command omp launcher doctor
 ```
 
-`command` bypasses the model-first shell functions below, which route `claude`
-and `kimi` to their configured harness, OMP by default.
+`command` bypasses the model-first shell functions below, which can route a
+name such as `claude` to another harness.
 
 `<agent> launcher doctor` and `<agent> launcher path` work for every launcher.
-`<agent> wrapper doctor` is the same check for every agent except `claude`, where
-`wrapper` belongs to claude-wrapper's own subcommands.
+`<agent> wrapper doctor|path` is the same check, unless a wrapper layer behind the
+launcher has `wrapper` subcommands of its own (see below).
 
-### Claude and claude-wrapper
+### Wrapper layers
 
-`launchers/claude` comes first on `PATH` and execs the next `claude`, which is
-usually claude-wrapper; the wrapper execs the native binary. Every layer execs,
-so Claude still runs as a direct child of the shell. The launcher supplies what
-every harness shares — the guards, identity, `--from`, `--recover`, resume by
-name, the `--continue` notice — and the wrapper supplies profiles, providers, the
-proxy, extra arguments, the resume fence (which needs those final arguments), and
-Claude's exit receipt.
+The next binary of an agent's name on `PATH` need not be the agent itself. It can
+be a wrapper layer — a script that sets up providers, profiles, or a proxy and
+then execs the agent. Every layer execs, so the agent still runs as a direct
+child of the shell. The launcher finds the next layer through `PATH` alone: it
+takes the first binary of that name that is not itself. If a wrapper comes first
+on `PATH` and execs the launcher in the same process, the launcher detects the
+re-entry and skips past its own last `PATH` entry, so each layer runs once.
 
-The two find each other through `PATH` alone. The launcher takes the first
-`claude` that is not itself; the wrapper takes the first `claude` after itself.
-Each detects being re-entered in the same process and then skips past its own
-last entry on `PATH`, so a `PATH` that puts the wrapper first, or lists both
-twice, still runs each layer once. When the launcher needs the native
-binary for Loom, it reads the first 4 KB of the next `claude` for the line
-`# agent-launcher-protocol: native-binary` and, finding it, asks that layer
-`claude wrapper native-binary`. The launcher marks itself the same way
-(`# agent-launcher-protocol: launcher`), so the wrapper's answer skips any
-launcher entry later on `PATH` and names the native binary. Setup does not link `~/bin/claude`: a second
-launcher entry on `PATH` could hand a launch back to the wrapper it came from.
+A layer tells the launcher what it takes over with lines of the form
+`# agent-launcher-protocol: CAPABILITY` in its first 4 KB. The launcher reads the
+file; it never executes a candidate to ask, because the native binary would take
+the question as a prompt.
+
+| Capability | The layer… | So the launcher… |
+| --- | --- | --- |
+| `native-binary` | answers `<agent> wrapper native-binary` with the binary it execs, and has `wrapper` subcommands of its own | hands Loom that binary for its readiness check, and passes `wrapper …` through |
+| `resume-fence` | runs Loom's resume readiness check on its own final arguments | does not run it |
+| `receipt` | leaves the shell its own exit receipt | writes no card |
+
+The launcher marks itself `# agent-launcher-protocol: launcher`, so a layer
+looking for the native binary can skip launcher entries. Setup does not link
+`~/bin/claude`: claude is the agent most often wrapped, and a second launcher
+entry on `PATH` after a wrapper could hand a launch back to the wrapper it came
+from.
 
 Adding another agent takes a symlink in `launchers/` plus, if its installer puts
 the binary somewhere a login shell would not find, an entry in the launcher's
@@ -82,9 +126,16 @@ the binary somewhere a login shell would not find, an entry in the launcher's
 ## Model-first interactive commands
 
 `launchers/agent-model` lets an interactive shell select a model first and a
-harness second. Source `shell/agent-models.sh` from the interactive shell setup
-to define `claude`, `fable`, `codex`, `kimi`, and `glm` as shell functions. The
-functions are not inherited by subprocesses, so a program that runs `codex
+harness second. Source `shell/agent-models.sh` from your interactive startup file
+to define `claude`, `fable`, `codex`, `kimi`, and `glm` as shell functions, using
+the checkout's absolute path:
+
+```bash
+# in ~/.zshrc or ~/.bashrc
+. /path/to/agent-launcher/shell/agent-models.sh
+```
+
+The functions are not inherited by subprocesses, so a program that runs `codex
 exec` still reaches the native Codex launcher.
 
 Choose a harness for one invocation with `--harness` or `-h`:
@@ -115,13 +166,13 @@ three forms, so `omp --resume "Efficient Deer"` works as well as
 
 ```bash
 codex --resume 01a02c18-042f-7950-8d9a-7d88b50c8cab   # a session id
-codex --resume "Efficient Deer"                       # an agent-mail session name
+codex --resume "Efficient Deer"                       # an agent-loom session name
 codex --resume "the already-verified result"          # text from the transcript
 ```
 
-A name is what agent-mail, the dashboards, and a peer's message call a session:
+A name is what agent-loom, the dashboards, and a peer's message call a session:
 its display name ("Efficient Deer"), its slug (`efficient-deer`), or the
-project-qualified address (`augur-efficient-deer`). Names come from agent-mail's
+project-qualified address (`augur-efficient-deer`). Names come from agent-loom's
 own store, so a session that has exited still resolves.
 
 Transcript text is matched against AgentsView's index of message text, not tool
@@ -156,7 +207,7 @@ version = 1
 
 [commands.glm]
 home = "opencode"
-default = "omp"
+default = "opencode"
 routes.opencode = { model = "zai-coding-plan/glm-5.3-flash" }
 routes.omp = { model = "zai/glm-5.3-flash" }
 ```
@@ -167,16 +218,16 @@ An empty table is a harness that needs no extra arguments. `home` and `default`
 must name routes that exist, which is checked at load, so a bad edit fails on the
 next command rather than resolving to something unintended.
 
-Machine-local overrides live in
-`${XDG_CONFIG_HOME:-$HOME/.config}/agent-models/config.toml`, which selects a
-harness per command and nothing else:
+Every command ships defaulting to its own harness. Machine-local overrides live
+in `${XDG_CONFIG_HOME:-$HOME/.config}/agent-models/config.toml`, which selects a
+harness per command and nothing else. To send `codex` and `glm` to OMP:
 
 ```toml
 version = 1
 
 [defaults]
-claude = "claude"
-fable = "claude"
+codex = "omp"
+glm = "omp"
 ```
 
 The CLI reads and writes that file only; `agent-models.toml` is hand-edited:
@@ -192,14 +243,10 @@ agent-model config check
 agent-model doctor
 ```
 
-Every command ships defaulting to OMP. The native Claude routes resolve `claude`
-through `PATH`, so they reach `launchers/claude` and then claude-wrapper's
-profiles. The OMP routes use provider-qualified model selectors for
-Anthropic, Fable, Codex, Kimi Code, and the Z.AI coding plan.
-
-The shipped OMP routes select Claude Opus 5.5 for `claude` and GPT-6 Astra for
-interactive `codex` launches. Native Claude model defaults come from the
-selected `claude-wrapper` profile.
+The native routes resolve each harness through `PATH`, so they reach the
+launchers. The OMP routes use provider-qualified model selectors for Anthropic,
+Fable, Codex, Kimi Code, and the Z.AI coding plan; the shipped OMP routes select
+Claude Opus 5.5 for `claude` and GPT-6 Astra for `codex`.
 
 ## Continuing in a fresh conversation
 
@@ -228,7 +275,7 @@ command claude --from SOURCE
 ```
 
 Replace `SOURCE` with the source session UUID or a quoted Loom name.
-`command claude` bypasses model-first shell functions and selects the Claude wrapper.
+`command claude` bypasses model-first shell functions and selects the claude launcher.
 For a Claude compaction loop, use this fresh-conversation path instead of
 `--resume`. It reads bounded historical context and keeps the full transcript
 export available in the bundle. It does not repair Claude's compaction behavior,
@@ -263,8 +310,8 @@ Installation preserves other hooks and trusts only Loom's exact hook definitions
 Launches check readiness without granting trust. OMP loads Loom's packaged
 startup extension explicitly, including when extension discovery is disabled.
 
-When `agent-loom` is on `PATH`, Codex and OMP startup preparation requires Python
-3.11+. Ordinary OMP conversations and native Claude/Codex resumes also require
+When `agent-loom` is on `PATH`, Claude, Codex, and OMP startup preparation
+requires Python 3.11+. Ordinary OMP conversations and native Claude/Codex resumes also require
 Loom's continuation API and ready startup callbacks. OMP can resume automatically,
 so its check applies even without a resume flag. These launches stop if readiness
 cannot be verified; they do not bypass the identity fence. Update agent-loom
@@ -312,7 +359,7 @@ cannot trust refuses rather than reporting no candidates.
 
 The `claude`, `codex`, and `omp` launchers route `--recover` here before
 anything else runs. A model-first command recovers in its model's own harness
-(`claude --recover` recovers Claude sessions even though `claude` defaults to OMP)
+(`claude --recover` recovers Claude sessions even when `claude` is configured to default to OMP)
 unless `--harness` names another; a harness Loom does not track is refused. A
 forwarded `--cd DIR` selects that directory's sessions instead of the current
 one's.
@@ -344,7 +391,7 @@ The launcher exports `AGENT_SESSION_ID`, a fresh id per launch, and unsets
 Claude Code and Codex export a per-session id into their shell subprocesses. Kimi
 and opencode export none. OMP exposes its native conversation id to extensions,
 but not to MCP or tool subprocesses, so its push bridge, tools, and Weft jobs
-otherwise acquire different identities. Addressing agent-mail to one session
+otherwise acquire different identities. Addressing agent-loom mail to one session
 rather than broadcasting to the whole project is the case that motivated this.
 `AGENT_SESSION_ID` fills the gap.
 
@@ -402,7 +449,7 @@ The bridge covers Zsh only. An agent that snapshots Bash would need its own.
 
 These agents render on the alternate screen, so exiting restores a scrollback
 with no sign of which session just ended. After a launched agent exits, the next
-shell prompt prints a receipt naming it by its agent-mail name:
+shell prompt prints a receipt naming it by its agent-loom name:
 
 ```
 ┌ llm-performance-models · Flying Cake
@@ -426,8 +473,9 @@ The shell consumes each card once and preserves the command and pipeline statuse
 Both input and output must be terminals. Headless, diagnostic, nested, and
 control-subcommand launches (`omp auth-broker`, `codex login`, `agy update`)
 write no card, so they cannot overwrite an outer interactive session's
-receipt. `launchers/claude` writes no card: claude-wrapper's `SessionEnd` hook
-owns Claude's receipt, including when a resume request switches to Claude.
+receipt. A wrapper layer that declares `receipt` leaves its own instead, and the
+launcher writes no card for it, including when a resume request switches to that
+agent.
 
 Set `AGENT_EPILOGUE_DIR` to move the card directory
 (default `~/.cache/agent-command-guards/epilogue`).
@@ -451,5 +499,9 @@ The launch and resume policies are specified in
 [`agent-launch.allium`](specs/agent-launch.allium). Regression test docstrings
 identify the rules and invariants they exercise.
 
-CI runs it on Linux, macOS, and Windows across Python 3.11–3.14. Suites that
+CI runs it on Python 3.11 and 3.14 on Linux, macOS, and Windows, plus 3.12 on Linux. Suites that
 need POSIX shells or terminal emulation skip on Windows with their reason.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
