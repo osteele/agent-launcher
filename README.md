@@ -257,6 +257,37 @@ Process-owned claims and work leases require their own recovery or transfer.
 Live or unverifiable predecessors, failed exports, incompatible Loom versions,
 and competing takeovers stop the launch.
 
+## Recovering a session that died
+
+A Claude session whose process died — killed, crashed, or taken down by Claude
+Code's idle compaction — never ends its Loom run. `claude --continue` does not
+find it reliably: it reopens the newest transcript in the directory, which is
+often a later session. `--recover` reopens the dead one:
+
+```bash
+claude --recover                        # the one session here that died without exiting
+claude --recover --dry-run              # list them without launching
+claude --recover="Swift Banjo"          # choose by Loom name, Loom ID, or native ID (or an 8+ character prefix)
+```
+
+The candidates are the runs `agent-loom continuation unended` lists for the
+current directory: each identity's current run, never ended, whose host process
+is gone. A run whose transcript is missing is named and skipped. With one
+candidate, the launcher resumes it as `claude --resume <native ID>` with the
+remaining arguments, through the ordinary resume fence, so the conversation keeps
+its Loom identity and name. Several candidates prompt on a terminal and are
+refused unattended until `--recover=` names one. None is an error; recovery never
+falls back to `--continue`. It cannot be combined with `--resume`, `--continue`,
+`--from`, `--fork-session`, or `--session-id`, and a process scan that Loom
+cannot trust refuses rather than reporting no candidates.
+
+The Claude wrapper routes `--recover` here. Recovery covers Claude only.
+
+`agent-model notice-unended claude -- ARGV` prints one line before a
+`--continue` launch when a session that died here is not the one `--continue`
+will reopen. It does nothing without `--continue`, so it adds no lookup to an
+ordinary launch.
+
 ## CPU priority
 
 The launcher starts the agent under `nice -n 5`, which the agent's whole process

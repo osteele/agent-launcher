@@ -552,3 +552,87 @@ surface CrossHarnessContinuation {
         -- A failed launch cancels its own reservation, never another generation.
 }
 
+
+-- Recovery of a Claude conversation whose host process died without ending its
+-- Loom run. Authority: request relayed from the agent-config session,
+-- 2026-10-07; transport is agent-loom's `continuation unended` listing.
+
+external entity RecoveryRequest {
+    launch: LaunchRequest
+    -- A Loom name, Loom ID, native ID, or an ID prefix of at least 8 characters.
+    selector: String?
+    dry_run: Boolean
+    -- The request also names --resume, --continue, --from, --fork-session, or
+    -- --session-id, each of which chooses the conversation itself.
+    conflicting_selection: Boolean
+}
+
+-- Loom's listing for request.launch.project: each identity's current run, still
+-- confirmed, whose host process is gone, restricted to runs whose transcript the
+-- harness's own store holds. Missing transcripts are reported, not resumed.
+-- A process scan Loom cannot trust is no listing at all, never an empty one.
+external entity UnendedListing {
+    request: RecoveryRequest
+    trusted: Boolean
+    candidates: List<Conversation>
+}
+
+rule RejectConflictingRecovery {
+    when: request: RecoveryRequest.created
+    requires: request.conflicting_selection
+    ensures: RecoveryRejected(request)
+}
+
+rule RejectUntrustedListing {
+    when: listing: UnendedListing.created
+    requires: not listing.trusted
+    ensures: RecoveryRejected(listing.request)
+}
+
+rule RejectRecoveryWithoutCandidate {
+    when: listing: UnendedListing.created
+    requires: listing.trusted
+    requires: listing.candidates.count = 0
+    ensures: RecoveryRejected(listing.request)
+}
+
+rule ListRecoveryCandidates {
+    when: listing: UnendedListing.created
+    requires: listing.trusted
+    requires: listing.request.dry_run
+    requires: listing.candidates.count > 0
+    ensures: ShowRecoveryCandidates(listing)
+}
+
+rule ResumeSoleRecoveryCandidate {
+    when: listing: UnendedListing.created
+    requires: listing.trusted
+    requires: not listing.request.dry_run
+    requires: not listing.request.conflicting_selection
+    requires: listing.candidates.count = 1
+    ensures: ResumeThroughLauncher(listing.request, listing.candidates.first)
+}
+
+surface SessionRecovery {
+    facing user: Caller
+    context request: RecoveryRequest where launch.caller = user
+
+    provides:
+        Recover(request)
+
+    @guarantee NoContinueFallback
+        -- Recovery never resumes the newest conversation in the directory in
+        -- place of a dead one. No candidate is an error.
+
+    @guarantee SelectionWhenSeveral
+        -- Several candidates prompt on a terminal. Unattended, the selector must
+        -- match exactly one, or recovery is refused with the candidates listed.
+
+    @guarantee IdentityByResume
+        -- The chosen conversation is resumed by its native ID through the
+        -- launcher's ordinary resume fence, so it keeps its Loom identity.
+
+    @guarantee ContinueNotice
+        -- Before a --continue launch, a dead conversation that --continue will
+        -- not reopen is named in one line; --continue keeps its native meaning.
+}

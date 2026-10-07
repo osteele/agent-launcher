@@ -9,6 +9,7 @@ documented name and continuation response schemas.
 The table is JSON at $FAKE_AGENT_LOOM_TABLE:
   {"names": {"<session id>": {"slug", "displayName", "assignedAt"?, "project"?}},
    "hostPids": {"<pid>": "<session id>"},
+   "unended": [<agent-loom-continuation/v1 run>, ...], "unendedError": "<code>"?,
    "mode": "answer" | "hang" | "old" | "garbage" | "array",
    "log": "<path>"?}
 Each call's arguments are appended to "log" as one JSON line when it is set.
@@ -63,6 +64,27 @@ def main(argv: list[str]) -> int:
                 }
             )
         )
+        return 0
+    if mode == "answer" and argv[:2] == ["continuation", "unended"]:
+        options = dict(zip(argv[2::2], argv[3::2]))
+        if table.get("unendedError"):
+            print(json.dumps({
+                "schema": "agent-loom-continuation/v1",
+                "ok": False,
+                "error": {"code": table["unendedError"], "message": "process scan unavailable"},
+            }))
+            return 1
+        runs = [
+            run for run in table.get("unended", [])
+            if run["project"] == options.get("--project")
+            and run["harness"] == options.get("--harness", run["harness"])
+        ]
+        print(json.dumps({
+            "schema": "agent-loom-continuation/v1",
+            "ok": True,
+            "project": options.get("--project"),
+            "runs": runs,
+        }))
         return 0
     if mode == "hang":
         time.sleep(30)

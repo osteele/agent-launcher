@@ -675,7 +675,8 @@ def argument_takes_value(harness: str, argument: str) -> bool:
     }
 
 
-def has_continuation_option(harness: str, arguments: list[str]) -> bool:
+def has_continuation_option(harness: str, arguments: list[str], option: str = "--from") -> bool:
+    """Whether OPTION appears as an option of its own rather than as a native value."""
     skip_value = False
     for index, argument in enumerate(arguments):
         if skip_value:
@@ -683,7 +684,7 @@ def has_continuation_option(harness: str, arguments: list[str]) -> bool:
             continue
         if argument == "--":
             break
-        if argument == "--from" or argument.startswith("--from="):
+        if argument == option or argument.startswith(option + "="):
             return True
         if (
             harness in {"claude", "omp"} and argument in {"--resume", "-r"}
@@ -1076,6 +1077,8 @@ def print_usage(commands: dict[str, Command], file: object = sys.stdout) -> None
   agent-model launch MODEL [--harness HARNESS | -h HARNESS] [--resume [SESSION]] [ARG ...]
   agent-model resolve MODEL [--harness HARNESS | -h HARNESS] [--resume [SESSION]] [ARG ...]
   agent-model continue HARNESS --launcher PATH --native-binary PATH -- --from SESSION [ARG ...]
+  agent-model recover claude --launcher PATH --native-binary PATH -- --recover[=SESSION] [--dry-run] [ARG ...]
+  agent-model notice-unended claude -- ARG ...
   agent-model resolve-session QUERY [--agent AGENT]
   agent-model verify-session ID --agent HARNESS
   agent-model receipt-target --agent HARNESS [--id ID] [--name NAME] [--timeout SECS]
@@ -1183,10 +1186,23 @@ def main(arguments: list[str]) -> int:
         print_usage(commands)
         return 0 if arguments else 2
     command, rest = arguments[0], arguments[1:]
-    if command == "has-from":
+    if command in {"has-from", "has-recover"}:
         if len(rest) < 2 or rest[1] != "--":
-            raise ConfigError("has-from requires HARNESS -- ARGV")
-        return 0 if has_continuation_option(rest[0], rest[2:]) else 3
+            raise ConfigError(f"{command} requires HARNESS -- ARGV")
+        option = "--from" if command == "has-from" else "--recover"
+        return 0 if has_continuation_option(rest[0], rest[2:], option) else 3
+    if command in {"recover", "notice-unended"}:
+        sys.path.insert(0, str(DEFAULTS_PATH.parent))
+        from agent_continuation import ContinuationError
+        from agent_recovery import notice_unended, recover
+
+        try:
+            if command == "notice-unended":
+                notice_unended(rest, argument_takes_value)
+                return 0
+            return recover(rest, argument_takes_value)
+        except (ContinuationError, OSError) as error:
+            raise ConfigError(str(error)) from error
     if command in {"continue", "prepare-startup", "validate-claude-continuation"}:
         # Keep continuation imports off lookup and receipt paths.
         sys.path.insert(0, str(DEFAULTS_PATH.parent))
