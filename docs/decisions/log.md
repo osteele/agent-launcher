@@ -36,7 +36,7 @@ accepting D.*
 - **2026-10-07** — In the context of a repository named for its command
   guards that had grown a multi-harness launcher twice the guards' size,
   facing two halves with different audiences — the guards general and public,
-  the launcher bound to agent-loom, AgentsView, herdr, and claude-wrapper — we
+  the launcher bound to agent-loom, AgentsView, and herdr — we
   decided to move the launcher into this repository with its history and find
   the guards as a sibling checkout (`AGENT_COMMAND_GUARDS_DIR` overrides), and
   neglected keeping both in one repository behind a reorganized README, so that

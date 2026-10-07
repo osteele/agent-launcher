@@ -140,6 +140,12 @@ class AgentModelTest(unittest.TestCase):
     def config(self) -> Path:
         return self.home / ".config" / "agent-models" / "config.toml"
 
+    def prefer(self, **defaults: str) -> None:
+        """Write a machine-local default harness for each named model."""
+        self.config().parent.mkdir(parents=True, exist_ok=True)
+        lines = "".join(f'{model} = "{harness}"\n' for model, harness in defaults.items())
+        self.config().write_text(f"version = 1\n\n[defaults]\n{lines}")
+
     def run_with_defaults(
         self, defaults: str, *arguments: str
     ) -> subprocess.CompletedProcess[str]:
@@ -245,6 +251,7 @@ model = "provider/selected-model"
 
     def test_native_id_shape_does_not_claim_ownership_during_an_outage(self) -> None:
         """TryExactNativeIdWhenLookupUnavailable uses the invocation harness."""
+        self.prefer(codex="omp")
         for session_id in (
             "session_5730bec7-38ff-436c-9124-c1e1ad910662",
             "ses_fa56499a4ffeUGPrn6w4JSed3K",
@@ -285,6 +292,7 @@ model = "provider/selected-model"
                 self.assertEqual(result.stdout.strip(), invocation)
 
     def test_bare_resume_opens_the_selected_harness_picker(self) -> None:
+        self.prefer(codex="omp")
         default = self.run_model("resolve", "codex", "--resume")
         self.assertEqual(default.returncode, 0, default.stderr)
         self.assertEqual(
@@ -307,6 +315,7 @@ model = "provider/selected-model"
         self,
     ) -> None:
         """TryExactNativeIdWhenLookupUnavailable does not infer a fresh conversation."""
+        self.prefer(codex="omp")
         result = self.run_model("resolve", "codex", "--resume", SESSION_ID)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
@@ -326,6 +335,7 @@ model = "provider/selected-model"
         self.assertIn('codex = "codex"', self.config().read_text())
 
     def test_short_harness_option_is_recognized_only_for_a_known_harness(self) -> None:
+        self.prefer(kimi="omp")
         selected = self.run_model("resolve", "kimi", "-h", "omp", "--continue")
         self.assertEqual(selected.returncode, 0, selected.stderr)
         self.assertEqual(selected.stdout.strip(), "omp --model=kimi-code/k3 --continue")
@@ -384,7 +394,7 @@ model = "provider/selected-model"
         self.assertIn("codex   codex     codex      config", list_result.stdout)
 
         reset_result = self.run_model("default", "reset", "codex")
-        self.assertEqual(reset_result.stdout.strip(), "codex = omp (shipped)")
+        self.assertEqual(reset_result.stdout.strip(), "codex = codex (shipped)")
         self.assertNotIn('codex = "', self.config().read_text())
 
     def test_shipped_defaults_are_valid(self) -> None:

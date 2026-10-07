@@ -20,10 +20,10 @@ ENV_FILE="$CONFIG_DIR/env"
 BIN_DIR="${AGENT_LAUNCHER_BIN_DIR:-$HOME/bin}"
 BLOCK_START="# >>> agent-launchers initialize >>>"
 BLOCK_END="# <<< agent-launchers initialize <<<"
-BLOCK_SOLUTION='Agent launchers are not configured; run ~/code/agent-tools/agent-launcher/launchers/setup'
-# Linked into BIN_DIR. claude is served from launchers/ on PATH only: claude-wrapper
-# follows it on PATH, and a second launcher entry there could hand a claude
-# launch back to the wrapper it came from.
+BLOCK_SOLUTION="Agent launchers are not configured; run $LAUNCHER_DIR/setup"
+# Linked into BIN_DIR. claude is served from launchers/ on PATH only: a wrapper
+# layer for claude may follow it on PATH, and a second launcher entry there
+# could hand a claude launch back to the wrapper it came from.
 AGENTS=(kimi opencode codex omp agy)
 
 DRY_RUN=false

@@ -2,8 +2,9 @@
 #
 # `home` is the command's native harness -- what `--harness own` selects
 # (`self` and `.` are synonyms), and a fact about the command rather than a preference.
-# `default` is the harness an unqualified invocation uses, and is the preference
-# this file exists to carry.
+# `default` is the harness an unqualified invocation uses. Each ships as the
+# command's own harness; choosing another is a preference, which belongs in the
+# machine-local file below.
 #
 # Each entry under `routes` is one supported (command, harness) pair. An empty
 # table means the harness needs no extra arguments; `model` is rendered with
@@ -17,30 +18,30 @@ version = 1
 
 [commands.claude]
 home = "claude"
-default = "omp"
+default = "claude"
 routes.claude = {}
 routes.omp = { model = "anthropic/claude-opus-5-5" }
 
 [commands.fable]
 home = "claude"
-default = "omp"
+default = "claude"
 routes.claude = { model = "fable" }
 routes.omp = { model = "anthropic/claude-fable-5-1" }
 
 [commands.codex]
 home = "codex"
-default = "omp"
+default = "codex"
 routes.codex = {}
 routes.omp = { model = "openai-codex/gpt-6-astra" }
 
 [commands.kimi]
 home = "kimi"
-default = "omp"
+default = "kimi"
 routes.kimi = { model = "kimi-code/k3" }
 routes.omp = { model = "kimi-code/k3" }
 
 [commands.glm]
 home = "opencode"
-default = "omp"
+default = "opencode"
 routes.opencode = { model = "zai-coding-plan/glm-5.3-flash" }
 routes.omp = { model = "zai/glm-5.3-flash" }

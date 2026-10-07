@@ -19,10 +19,7 @@ AGENTS = ("kimi", "opencode", "codex", "omp", "agy")
 RC_FILES = (".zshenv", ".zshrc", ".bashrc")
 BLOCK_START = "# >>> agent-launchers initialize >>>"
 BLOCK_END = "# <<< agent-launchers initialize <<<"
-BLOCK_SOLUTION = (
-    "Agent launchers are not configured; run "
-    "~/code/agent-tools/agent-launcher/launchers/setup"
-)
+BLOCK_SOLUTION = f"Agent launchers are not configured; run {LAUNCHER_DIR}/setup"
 
 requires_posix = unittest.skipIf(
     os.name == "nt", "setup and the generated env file are POSIX shell"

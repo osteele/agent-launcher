@@ -1,6 +1,6 @@
 """`--recover`: resuming a conversation whose host died without ending its run.
 
-These drive `agent-model` as the Claude wrapper does, against a stand-in Loom
+These drive `agent-model` as the launcher does, against a stand-in Loom
 and a launcher that records the argv it was handed, so they test the selection
 and the hand-off rather than Claude itself.
 """
