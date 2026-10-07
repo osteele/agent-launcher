@@ -4,11 +4,12 @@
 # Generic launcher that starts one agent CLI with the command guards active.
 #
 # Invoked through a symlink named for the agent it launches (claude, kimi,
-# opencode, codex, omp, agy). For claude, the next `claude` on PATH is usually
-# claude-wrapper, which execs the native binary in turn; every layer execs, so
-# none of them stays resident above the agent. Line 2 marks this file as a
-# layer in front of the agent, so a layer behind it that looks for the native
-# binary (claude-wrapper's `wrapper native-binary`) skips it.
+# opencode, codex, omp, agy). The next binary of that name on PATH may itself be
+# a wrapper layer that execs the agent in turn; every layer execs, so none of
+# them stays resident above the agent. Layers describe themselves to each other
+# with `# agent-launcher-protocol: CAPABILITY` lines near their top. Line 2
+# marks this file as a launcher, so a layer behind it that looks for the native
+# binary skips it.
 # The symlink name selects the real binary to find and whether that agent needs
 # the Zsh bridge; everything else is shared.
 
@@ -146,17 +147,25 @@ find_real_binary() {
     return 1
 }
 
+# Whether the next binary on PATH is a wrapper layer declaring CAPABILITY with
+# an `# agent-launcher-protocol: CAPABILITY` line in its first 4 KB. Only the
+# file is read: executing the native binary to ask would give it a prompt.
+#   native-binary  answers `<agent> wrapper native-binary` with the binary it execs
+#   resume-fence   runs Loom's resume readiness check on its own final arguments
+#   receipt        leaves the shell its own exit receipt
+next_layer_declares() {
+    local candidate
+    candidate="$(find_real_binary 2>/dev/null)" || return 1
+    head -c 4096 "$candidate" 2>/dev/null | grep -qxF "# agent-launcher-protocol: $1"
+}
+
 # The native binary, behind any wrapper layer that execs it. Loom's readiness
 # check runs the binary it is given, so it must not be a layer that starts a
-# proxy or applies a profile. A layer declares that it answers
-# `wrapper native-binary` with a marker line near its top; nothing is executed
-# to find out, because the native binary would take that as a prompt.
-NATIVE_BINARY_MARKER='# agent-launcher-protocol: native-binary'
-
+# proxy or applies a profile.
 native_binary() {
     local candidate
     candidate="$(find_real_binary)" || return 1
-    if head -c 4096 "$candidate" 2>/dev/null | grep -qxF "$NATIVE_BINARY_MARKER"; then
+    if next_layer_declares native-binary; then
         "$candidate" wrapper native-binary
     else
         printf '%s\n' "$candidate"
@@ -235,18 +244,18 @@ doctor() {
     fi
 }
 
-# A layer that comes before this launcher on PATH (claude-wrapper, when PATH
-# order puts it first) execs the next `claude`: this launcher, in the same
-# process it already ran in. Starting over would resolve that layer again and
+# A wrapper layer that comes before this launcher on PATH execs the next binary
+# of this name: this launcher, in the same process it already ran in. Starting over would resolve that layer again and
 # loop. Hand straight to whatever follows this launcher instead.
 if [[ "${AGENT_LAUNCHER_ACTIVE:-}" == "$$:$NAME" ]]; then
     REENTRY_BINARY="$(find_real_binary after-self)" || exit 1
     exec "$REENTRY_BINARY" "$@"
 fi
 
-# `launcher doctor|path` for every agent; `wrapper doctor|path` too, except for
-# claude, whose wrapper layer has its own `wrapper` subcommands.
-if [[ "${1:-}" == "launcher" || ( "${1:-}" == "wrapper" && "$NAME" != "claude" ) ]]; then
+# `launcher doctor|path` for every agent; `wrapper doctor|path` too, unless a
+# wrapper layer behind this launcher has `wrapper` subcommands of its own.
+if [[ "${1:-}" == "launcher" ]] ||
+   { [[ "${1:-}" == "wrapper" ]] && ! next_layer_declares native-binary; }; then
     case "${2:-}" in
         doctor)
             doctor
@@ -531,13 +540,18 @@ if lookup_flags="$(resume_flags)"; then
 fi
 
 REAL_BINARY="$(find_real_binary)"
-if [[ "$NAME" == "codex" || "$NAME" == "omp" ]] &&
+# Loom's resume readiness check, for the harnesses Loom binds. A wrapper layer
+# that adds arguments of its own runs it on its final arguments instead, and
+# says so.
+if [[ "$NAME" == "claude" || "$NAME" == "codex" || "$NAME" == "omp" ]] &&
    [[ "${AGENT_COMMAND_GUARDS_CONTINUATION_PID:-}" != "$$" ]] &&
-   command -v agent-loom >/dev/null 2>&1; then
+   command -v agent-loom >/dev/null 2>&1 &&
+   ! next_layer_declares resume-fence; then
+    startup_native="$(native_binary)" || exit 1
     startup_file="$(mktemp "${TMPDIR:-/tmp}/agent-startup.XXXXXX")"
     trap 'rm -f "$startup_file"' EXIT
     if ! "$LAUNCHER_DIR/launchers/agent-model" prepare-startup "$NAME" \
-        --native-binary "$REAL_BINARY" -- "$@" > "$startup_file"; then
+        --native-binary "$startup_native" -- "$@" > "$startup_file"; then
         exit 2
     fi
     startup_args=()
@@ -547,7 +561,7 @@ if [[ "$NAME" == "codex" || "$NAME" == "omp" ]] &&
     rm -f "$startup_file"
     trap - EXIT
     set -- ${startup_args[@]+"${startup_args[@]}"}
-    unset startup_args startup_arg startup_file
+    unset startup_args startup_arg startup_file startup_native
 fi
 
 
@@ -673,8 +687,9 @@ fi
 #
 # One argument per line, consumed verbatim as agent-epilogue's argv: a format
 # with no quoting rules cannot disagree with its reader about them.
-# Claude's separate wrapper publishes its own SessionEnd receipt.
-if [[ "$NESTED_LAUNCH" == false && "$INTERACTIVE_LAUNCH" == true && "$NAME" != "claude" ]]; then
+# A wrapper layer that leaves its own receipt says so; two would overwrite.
+if [[ "$NESTED_LAUNCH" == false && "$INTERACTIVE_LAUNCH" == true ]] &&
+   ! next_layer_declares receipt; then
     epilogue_dir="${AGENT_EPILOGUE_DIR:-$HOME/.cache/agent-command-guards/epilogue}"
     # Keep this derivation identical to the one in shell/epilogue.zsh.
     epilogue_key=""

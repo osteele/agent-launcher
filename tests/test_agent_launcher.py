@@ -176,6 +176,24 @@ class AgentLauncherTest(unittest.TestCase):
                 self.assertIn("startup is not ready", result.stderr)
                 self.assertFalse((self.tmp / "executed").exists())
 
+    def test_claude_resume_is_fenced_unless_a_layer_fences_it(self) -> None:
+        # Claude run directly gets Loom's resume check from the launcher; a
+        # wrapper declaring `resume-fence` runs it on its own final arguments.
+        self.names_table.write_text(json.dumps({"names": {}, "startupReady": False}))
+        self.install_real("claude")
+        result = self.launch("claude", "--continue")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("startup is not ready", result.stderr)
+        self.assertFalse((self.tmp / "executed").exists())
+        layer = self.real_bin / "claude"
+        layer.write_text(
+            "#!/bin/sh\n# agent-launcher-protocol: resume-fence\n"
+            f'printf launched >> "{self.tmp / "executed"}"\n'
+        )
+        result = self.launch("claude", "--continue")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.tmp / "executed").exists())
+
     def test_skips_itself_when_finding_the_real_binary(self) -> None:
         # The launcher sits ahead of the real binary on PATH; resolving `kimi`
         # naively would re-exec the launcher forever.
@@ -733,7 +751,7 @@ class AgentLauncherTest(unittest.TestCase):
                 self.assertTrue(card.exists(), output)
 
     def test_switch_to_claude_keeps_native_identity(self) -> None:
-        """IdentitySeparation holds when the owning harness is the external Claude wrapper."""
+        """IdentitySeparation holds when a resume switches the launch to Claude."""
         self.install_real("claude")
         self.install_agentsview({OMP_RESUME_ID: "claude"})
         result = self.launch("omp", "--resume", OMP_RESUME_ID)
@@ -742,9 +760,11 @@ class AgentLauncherTest(unittest.TestCase):
         self.assertEqual(self.session_id(result), OMP_RESUME_ID)
         self.assertIn("guards=1", result.stdout)
 
-    def test_switch_to_claude_leaves_receipt_to_its_native_wrapper(self) -> None:
-        """ReceiptAtMostOncePerRun delegates Claude's receipt to its existing owner."""
-        self.install_real("claude")
+    def test_switch_to_claude_leaves_receipt_to_a_layer_that_declares_one(self) -> None:
+        """ReceiptAtMostOncePerRun delegates Claude's receipt to a layer that leaves its own."""
+        real = self.install_real("claude")
+        body = real.read_text().split("\n", 1)
+        real.write_text(f"{body[0]}\n# agent-launcher-protocol: receipt\n{body[1]}")
         self.install_agentsview({OMP_RESUME_ID: "claude"})
         self.environment["TERM_SESSION_ID"] = "claude-owner"
 
@@ -900,7 +920,7 @@ class AgentLauncherTest(unittest.TestCase):
         self.assertIn("args=wrapper install", result.stdout)
 
 
-# A stand-in for claude-wrapper: it does its setup once per process, then execs
+# A stand-in wrapper layer for claude: it does its setup once per process, then execs
 # the next `claude` on PATH as the real wrapper does -- after its first entry on
 # a first run, after its last on re-entry -- and answers the native-binary query.
 FAKE_CLAUDE_WRAPPER = """#!/bin/bash
@@ -943,7 +963,7 @@ exec "$next" "$@"
 
 @requires_posix
 class ClaudeChainTest(unittest.TestCase):
-    """launchers/claude in front of claude-wrapper in front of the native binary."""
+    """launchers/claude in front of a wrapper layer in front of the native binary."""
 
     # The launcher fixture without re-running every launcher test under it.
     tearDown = AgentLauncherTest.tearDown

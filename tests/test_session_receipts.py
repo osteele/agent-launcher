@@ -356,10 +356,11 @@ class LauncherCardTest(ReceiptTestCase):
         input_tty: bool = True,
         output_tty: bool = True,
         removed: tuple[str, ...] = (),
+        fake_body: str = "#!/bin/bash\nexit 0\n",
         **overrides: str,
     ) -> tuple[Path, subprocess.CompletedProcess[str]]:
         fake = self.bin_dir / harness
-        fake.write_text("#!/bin/bash\nexit 0\n")
+        fake.write_text(fake_body)
         fake.chmod(0o755)
         link = self.tmp / harness
         if not link.exists():
@@ -408,6 +409,18 @@ class LauncherCardTest(ReceiptTestCase):
         self.assertIn("kimi", output)
         self.assertIn("status 7", output)
         self.assertRegex(output, r"\d+[smh]")
+
+    def test_claude_without_a_receipt_layer_gets_a_card(self) -> None:
+        """ShowExitReceipt: Claude launched directly gets a receipt like any agent."""
+        card, _ = self.launch("claude")
+        self.assertIn("claude", card.read_text().splitlines())
+
+    def test_a_layer_that_leaves_its_own_receipt_suppresses_the_card(self) -> None:
+        """ReceiptAtMostOncePerRun: a wrapper declaring `receipt` writes the only one."""
+        card, _ = self.launch(
+            "claude", fake_body="#!/bin/bash\n# agent-launcher-protocol: receipt\nexit 0\n"
+        )
+        self.assertFalse(card.exists())
 
     @unittest.skipUnless(shutil.which("zsh"), "the prompt half of the key requires Zsh")
     def test_herdr_pane_keys_both_sides_ahead_of_terminal_session(self) -> None:
