@@ -41,10 +41,13 @@ visible makes nothing else a command. Setup warns when it cannot find the guards
 beside this checkout or at `AGENT_COMMAND_GUARDS_DIR`. Verify with:
 
 ```bash
-claude launcher doctor
-kimi launcher doctor
-omp launcher doctor
+command claude launcher doctor
+command kimi launcher doctor
+command omp launcher doctor
 ```
+
+`command` bypasses the model-first shell functions below, which route `claude`
+and `kimi` to their configured harness, OMP by default.
 
 `<agent> launcher doctor` and `<agent> launcher path` work for every launcher.
 `<agent> wrapper doctor` is the same check for every agent except `claude`, where
@@ -62,11 +65,14 @@ Claude's exit receipt.
 
 The two find each other through `PATH` alone. The launcher takes the first
 `claude` that is not itself; the wrapper takes the first `claude` after itself.
-Each detects being re-entered in the same process, so a `PATH` that puts the
-wrapper first still runs each layer once. When the launcher needs the native
+Each detects being re-entered in the same process and then skips past its own
+last entry on `PATH`, so a `PATH` that puts the wrapper first, or lists both
+twice, still runs each layer once. When the launcher needs the native
 binary for Loom, it reads the first 4 KB of the next `claude` for the line
 `# agent-launcher-protocol: native-binary` and, finding it, asks that layer
-`claude wrapper native-binary`. Setup does not link `~/bin/claude`: a second
+`claude wrapper native-binary`. The launcher marks itself the same way
+(`# agent-launcher-protocol: launcher`), so the wrapper's answer skips any
+launcher entry later on `PATH` and names the native binary. Setup does not link `~/bin/claude`: a second
 launcher entry on `PATH` could hand a launch back to the wrapper it came from.
 
 Adding another agent takes a symlink in `launchers/` plus, if its installer puts

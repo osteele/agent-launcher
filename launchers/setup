@@ -303,5 +303,7 @@ add_block "$HOME/.bashrc"
 
 if ! $DRY_RUN; then
     printf 'Setup complete. Restart the shell or run: . %s\n' "$ENV_FILE"
-    printf 'Then verify with: claude launcher doctor && omp launcher doctor\n'
+    # `command` bypasses the model-first shell functions, which can route
+    # `claude` to another harness's launcher.
+    printf 'Then verify with: command claude launcher doctor; command omp launcher doctor\n'
 fi

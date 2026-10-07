@@ -1,11 +1,14 @@
 #!/bin/bash
+# agent-launcher-protocol: launcher
 #
 # Generic launcher that starts one agent CLI with the command guards active.
 #
 # Invoked through a symlink named for the agent it launches (claude, kimi,
 # opencode, codex, omp, agy). For claude, the next `claude` on PATH is usually
 # claude-wrapper, which execs the native binary in turn; every layer execs, so
-# none of them stays resident above the agent.
+# none of them stays resident above the agent. Line 2 marks this file as a
+# layer in front of the agent, so a layer behind it that looks for the native
+# binary (claude-wrapper's `wrapper native-binary`) skips it.
 # The symlink name selects the real binary to find and whether that agent needs
 # the Zsh bridge; everything else is shared.
 
