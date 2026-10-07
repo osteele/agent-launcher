@@ -14,7 +14,10 @@ from tests.fake_agent_loom import install as install_fake_agent_loom
 from tests.test_agent_model import run_pty
 
 REPO = Path(__file__).resolve().parent.parent
-SHADOWS = REPO / "shadows"
+# Stand-ins for the agent-command-guards shadows, which live in their own
+# repository: the launcher only checks that git is executable and puts the
+# directory on PATH.
+SHADOWS = REPO / "tests" / "fixtures" / "guards"
 LAUNCHER = REPO / "agent-launcher"
 LAUNCHER_DIR = REPO / "launchers"
 SHELL_INIT = LAUNCHER_DIR / "shell-init"
@@ -71,6 +74,7 @@ class AgentLauncherTest(unittest.TestCase):
         self.environment.pop("XDG_CONFIG_HOME", None)
         self.environment.pop("ZDOTDIR", None)
         self.environment.pop("AGENT_COMMAND_GUARDS_ACTIVE", None)
+        self.environment["AGENT_COMMAND_GUARDS_DIR"] = str(SHADOWS)
         self.environment.pop("OPENAI_API_KEY", None)
         self.environment.pop("ANTHROPIC_API_KEY", None)
         self.environment.pop("AGENT_LAUNCHER_KEEP_API_KEYS", None)
@@ -866,6 +870,26 @@ class AgentLauncherTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"Real opencode: {self.real_bin / 'opencode'}", result.stdout)
         self.assertIn("Launcher is first on PATH", result.stdout)
+
+    def test_doctor_finds_with_limits_on_path_not_in_the_guards(self) -> None:
+        # with-limits is installed by cargo and resolved on PATH; the guards
+        # directory never contains it.
+        self.install_real("opencode")
+        result = self.launch("opencode", "wrapper", "doctor")
+        self.assertIn("with-limits is not on PATH", result.stdout)
+        with_limits = self.real_bin / "with-limits"
+        with_limits.write_text("#!/bin/sh\n")
+        with_limits.chmod(0o755)
+        result = self.launch("opencode", "wrapper", "doctor")
+        self.assertIn(f"OK   UV RAM guard: {SHADOWS / 'uv'} with {with_limits}", result.stdout)
+
+    def test_missing_guards_are_announced_and_not_activated(self) -> None:
+        self.install_real("kimi")
+        self.environment["AGENT_COMMAND_GUARDS_DIR"] = str(self.tmp / "absent")
+        result = self.launch("kimi")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("runs unguarded", result.stderr)
+        self.assertIn("guards=\n", result.stdout)
 
     def test_unknown_wrapper_subcommand_reaches_the_agent(self) -> None:
         # `wrapper` is only intercepted for doctor and path; anything else is

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Generic launcher that activates the command guards for one agent CLI.
+# Generic launcher that starts one agent CLI with the command guards active.
 #
 # Invoked through a symlink named for the agent it launches (kimi, opencode,
 # codex, omp).
@@ -12,8 +12,11 @@ set -euo pipefail
 SCRIPT_PATH="$(realpath "$0")"
 LAUNCHER_DIR="$(dirname "$SCRIPT_PATH")"
 NAME="$(basename "$0")"
-DEFAULT_SHADOW_DIR="$LAUNCHER_DIR/shadows"
-SHADOW_DIR="${AGENT_LAUNCHER_PREPEND_PATH:-$DEFAULT_SHADOW_DIR}"
+# The guards are a separate checkout, agent-command-guards, expected beside
+# this one. AGENT_COMMAND_GUARDS_DIR names its shadows/ directory elsewhere;
+# AGENT_LAUNCHER_PREPEND_PATH overrides both.
+DEFAULT_SHADOW_DIR="$(dirname "$LAUNCHER_DIR")/agent-command-guards/shadows"
+SHADOW_DIR="${AGENT_LAUNCHER_PREPEND_PATH:-${AGENT_COMMAND_GUARDS_DIR:-$DEFAULT_SHADOW_DIR}}"
 SHELL_INIT_DIR="$LAUNCHER_DIR/launchers/shell-init"
 
 # Whether this launch is nested inside another agent's session. Captured here,
@@ -136,30 +139,6 @@ prepend_path_once() {
     export PATH
 }
 
-# The shadows moved from the repository root into shadows/ at this timestamp.
-# Root symlinks left behind serve sessions that started before the move, so they
-# are removable once the machine has booted since.
-SHADOWS_MOVED_AT=1786909200
-
-report_transitional_symlinks() {
-    local present=() link
-    for link in git ram-guard shadow_wrapper.py ssh scp rsync uv; do
-        [[ -L "$LAUNCHER_DIR/$link" ]] && present+=("$link")
-    done
-    [[ ${#present[@]} -eq 0 ]] && return 0
-
-    local booted
-    # Absent on Linux, and absent from a minimal PATH; report without it.
-    booted=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ sec = \([0-9]*\).*/\1/p' || true)
-
-    if [[ -n "$booted" && "$booted" -gt "$SHADOWS_MOVED_AT" ]]; then
-        printf 'WARN Transitional root symlinks are now removable (booted since the shadows/ move):\n'
-        printf '       cd %s && rm %s\n' "$LAUNCHER_DIR" "${present[*]}"
-    else
-        printf 'OK   Transitional root symlinks serving pre-move sessions: %s\n' "${present[*]}"
-    fi
-}
-
 doctor() {
     local failed=false
     local real_binary active
@@ -180,10 +159,14 @@ doctor() {
         printf 'WARN Git shadow: %s/git is missing or not executable\n' "$SHADOW_DIR"
     fi
 
-    if [[ -x "$SHADOW_DIR/uv" && -x "$SHADOW_DIR/with-limits" ]]; then
-        printf 'OK   UV RAM guard: %s\n' "$SHADOW_DIR/uv"
+    # with-limits is a separately installed binary that the uv shadow resolves
+    # on PATH, never a file inside the guards directory.
+    if [[ -x "$SHADOW_DIR/uv" ]] && command -v with-limits >/dev/null 2>&1; then
+        printf 'OK   UV RAM guard: %s with %s\n' "$SHADOW_DIR/uv" "$(command -v with-limits)"
+    elif [[ -x "$SHADOW_DIR/uv" ]]; then
+        printf 'WARN UV RAM guard: with-limits is not on PATH (cargo install with-limits)\n'
     else
-        printf 'WARN UV RAM guard is incomplete under %s\n' "$SHADOW_DIR"
+        printf 'WARN UV RAM guard: %s/uv is missing or not executable\n' "$SHADOW_DIR"
     fi
 
     if needs_shell_bridge; then
@@ -196,8 +179,6 @@ doctor() {
     else
         printf 'OK   Zsh bridge: not required by %s\n' "$NAME"
     fi
-
-    report_transitional_symlinks
 
     active="$(command -v "$NAME" 2>/dev/null || true)"
     if [[ -n "$active" && "$(realpath "$active")" == "$SCRIPT_PATH" ]]; then
@@ -584,6 +565,11 @@ if [[ -x "$SHADOW_DIR/git" ]]; then
         fi
         export ZDOTDIR="$SHELL_INIT_DIR"
     fi
+else
+    # A missing guard must be loud: the session would otherwise run every git,
+    # ssh, and uv command unguarded with nothing in the transcript to say so.
+    printf '%s: command guards not found at %s; this session runs unguarded\n' \
+        "$NAME" "$SHADOW_DIR" >&2
 fi
 
 # Codex 0.153.1 can fan skill discovery out to hundreds of simultaneous file

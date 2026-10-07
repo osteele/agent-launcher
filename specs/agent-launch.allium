@@ -2,7 +2,7 @@
 -- Scope: Agent launch, native resume, cross-harness continuation, and exit receipts.
 -- Includes: Model/harness selection, continuation context and identity, receipts.
 -- Excludes: Installation, harness internals, transcript indexing, credential storage,
--- and command execution policy (specified in command-guards.allium).
+-- and command execution policy (specified in agent-command-guards' command-guards.allium).
 -- Authority: Elicitation on 2026-09-23. Sections labeled baseline retain documented
 -- behavior from README.md; these specifications do not assert implementation parity.
 

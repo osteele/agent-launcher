@@ -1,16 +1,18 @@
-"""Every wrapper pays its startup cost on every guarded command.
+"""agent-model pays its startup cost in front of launches and at the prompt.
 
-The requirement is latency, not any particular way of achieving it. Today the
-wrappers import nothing outside the standard library and run under whatever
-`python3` the ambient PATH supplies, with no virtualenv and no dependency
-resolution — but that is the current means, and a change that keeps the budget
-is fine. This test measures the requirement so the means stays free to change.
+It runs before every resume and every model-first launch, and the exit-receipt
+reader calls it from a zsh precmd hook. The requirement is latency, not any
+particular way of achieving it. Today it imports nothing outside the standard
+library and runs under whatever `python3` the ambient PATH supplies, with no
+virtualenv and no dependency resolution — but that is the current means, and a
+change that keeps the budget is fine. This test measures the requirement so the
+means stays free to change.
 
 What it catches is the regression that matters: a dependency whose import cost
-lands on every `git`, `ssh`, `rsync`, and `uv run` an agent issues.
+lands in front of every launch and every prompt.
 
 Measurement is relative and interleaved. Interpreter startup is not the
-wrapper's fault, so a baseline is subtracted — but the baseline has to be
+subject's fault, so a baseline is subtracted — but the baseline has to be
 sampled in the same window as the subject. A baseline taken once and compared
 against samples collected later can yield a *negative* overhead when load
 arrives in between, which is impossible (loading a module cannot beat loading
@@ -30,21 +32,19 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# Module-load overhead attributable to the wrapper, above interpreter startup.
+# Module-load overhead attributable to the subject, above interpreter startup.
 # Generous: a single third-party import typically costs several times this.
-# Measured on a loaded laptop, the wrappers sit between 8ms and 43ms.
+# Measured on a loaded laptop, the subjects sat between 8ms and 43ms.
 BUDGET_MS = 150.0
 
 RUNS = 7
 
 SUBJECTS = {
-    "shadow_wrapper.py": REPO / "shadows" / "shadow_wrapper.py",
-    "uv": REPO / "shadows" / "uv",
     "agent-model": REPO / "launchers" / "agent-model",
 }
 
 # Loads the file as a module without running it. SourceFileLoader is named
-# explicitly because three of the four subjects have no `.py` extension —
+# explicitly because the subject has no `.py` extension —
 # filenames are the command interface here — and the suffix-based helpers
 # return no loader for them. Every subject guards its entry point behind
 # __main__, so import executes definitions only. dataclasses and typing resolve
@@ -92,12 +92,12 @@ def _overhead_ms(argv: list[str]) -> float:
 
 class StartupBudgetTest(unittest.TestCase):
     def test_every_subject_is_present(self) -> None:
-        """A renamed or moved wrapper must not silently drop out of coverage."""
+        """A renamed or moved subject must not silently drop out of coverage."""
         for name, path in SUBJECTS.items():
             with self.subTest(subject=name):
                 self.assertTrue(path.is_file(), f"{path} is missing")
 
-    def test_wrapper_load_stays_within_budget(self) -> None:
+    def test_load_stays_within_budget(self) -> None:
         for name, path in SUBJECTS.items():
             with self.subTest(subject=name):
                 overhead = _overhead_ms([sys.executable, "-c", LOAD_SOURCE, str(path)])

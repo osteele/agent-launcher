@@ -3,16 +3,16 @@
 # Install the agent launchers (kimi, opencode, codex, omp, agy) ahead of their real binaries.
 #
 # The launchers live in this directory rather than the repository root so that
-# putting them on PATH does not also put the command shadows there. Only the
-# agent launchers themselves become globally visible; ssh, scp, rsync, git, and
-# uv stay shadowed inside agent sessions alone.
+# putting them on PATH puts nothing else there. The command guards
+# (agent-command-guards, a separate checkout) stay off PATH in ordinary shells;
+# the launchers put them on PATH inside agent sessions alone.
 
 set -euo pipefail
 
 LAUNCHER_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$LAUNCHER_DIR/.." && pwd)"
 LAUNCHER_TARGET="$REPO_DIR/agent-launcher"
-SHADOW_DIR="$REPO_DIR/shadows"
+SHADOW_DIR="${AGENT_COMMAND_GUARDS_DIR:-$(dirname "$REPO_DIR")/agent-command-guards/shadows}"
 EPILOGUE_ZSH="$REPO_DIR/shell/epilogue.zsh"
 PATH_ORDER_ZSH="$REPO_DIR/shell/path-order.zsh"
 CONFIG_DIR="$HOME/.config/agent-launchers"
@@ -20,7 +20,7 @@ ENV_FILE="$CONFIG_DIR/env"
 BIN_DIR="${AGENT_LAUNCHER_BIN_DIR:-$HOME/bin}"
 BLOCK_START="# >>> agent-launchers initialize >>>"
 BLOCK_END="# <<< agent-launchers initialize <<<"
-BLOCK_SOLUTION='Agent launchers are not configured; run ~/code/agent-tools/agent-command-guards/launchers/setup'
+BLOCK_SOLUTION='Agent launchers are not configured; run ~/code/agent-tools/agent-launcher/launchers/setup'
 AGENTS=(kimi opencode codex omp agy)
 
 DRY_RUN=false
@@ -106,13 +106,13 @@ add_block() {
     if [[ "$quiet" == quiet ]]; then
         printf '\n%s\n%s\n%s\n%s\n' \
             "$BLOCK_START" \
-            '# !! Contents within this block are managed by agent-command-guards/launchers/setup !!' \
+            '# !! Contents within this block are managed by agent-launcher/launchers/setup !!' \
             '[ -f "$HOME/.config/agent-launchers/env" ] && . "$HOME/.config/agent-launchers/env"' \
             "$BLOCK_END" >> "$file"
     else
         printf '\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
             "$BLOCK_START" \
-            '# !! Contents within this block are managed by agent-command-guards/launchers/setup !!' \
+            '# !! Contents within this block are managed by agent-launcher/launchers/setup !!' \
             'if [ -f "$HOME/.config/agent-launchers/env" ]; then' \
             '    . "$HOME/.config/agent-launchers/env"' \
             'else' \
@@ -165,13 +165,17 @@ for zsh_file in "$EPILOGUE_ZSH" "$PATH_ORDER_ZSH"; do
         exit 1
     fi
 done
+if [[ ! -x "$SHADOW_DIR/git" ]]; then
+    printf 'Warning: command guards not found at %s; launched agents will run unguarded.\n' "$SHADOW_DIR" >&2
+    printf '         Check out agent-command-guards beside this repository, or set AGENT_COMMAND_GUARDS_DIR.\n' >&2
+fi
 
 if $DRY_RUN; then
     printf 'Would create %s and prepend %s to PATH\n' "$ENV_FILE" "$LAUNCHER_DIR"
 else
     mkdir -p "$CONFIG_DIR"
     cat > "$ENV_FILE" <<EOF
-# agent-launchers shell setup (managed by agent-command-guards/launchers/setup)
+# agent-launchers shell setup (managed by agent-launcher/launchers/setup)
 export PATH="$LAUNCHER_DIR:\$PATH"
 
 # agy resolves ahead of the launcher directory and cannot be intercepted by

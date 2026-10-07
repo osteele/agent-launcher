@@ -1,62 +1,27 @@
-# Agent Command Guards
+# Agent Launcher
 
-[![CI](https://github.com/osteele/agent-command-guards/actions/workflows/ci.yml/badge.svg)](https://github.com/osteele/agent-command-guards/actions/workflows/ci.yml)
+[![CI](https://github.com/osteele/agent-launcher/actions/workflows/ci.yml/badge.svg)](https://github.com/osteele/agent-launcher/actions/workflows/ci.yml)
 
-Wrappers for `ssh`, `scp`, `rsync`, `git`, and `uv` that apply workstation policy
-to the commands an agent runs. Each wrapper does its work and hands off to the
-real binary, so a guarded command behaves like the unguarded one everywhere the
-policy has nothing to say.
+Launchers for the kimi, opencode, codex, OMP, and agy coding-agent CLIs. Each
+launcher finds the real binary, puts the
+[agent-command-guards](https://github.com/osteele/agent-command-guards) shadows at
+the front of `PATH` for the session, gives the session a stable identity, and
+then `exec`s the agent. Around that core it adds model-first shell commands,
+`--resume` by session name or transcript text, continuation across harnesses,
+and an exit receipt that names the session that just ended.
 
-Policy applies at the executable boundary, which catches a command however it was
-composed. Provider selection, agent permissions, and tool-request policy belong to
-the launchers and to [agent-tool-policy](https://github.com/osteele/agent-tool-policy), the shared pre-tool
-hook that also calls `with-limits`, resolved on `PATH`.
+This is personal tooling, written against one machine's set of agents and
+services:
 
-## Layout
-
-`shadows/` holds the wrappers and is the only directory that goes on `PATH`. It
-contains exactly what should become a command name. The repository root used to be
-the `PATH` entry, which meant any file added there became a command in every agent
-session, so a helper named `setup` or `check` would have shadowed the real one.
-
-`launchers/` follows the same rule for the agent launchers. `tests/`,
-`agent-launcher`, `agent-epilogue`, `agent-mail-name`, `shell/`, and the
-documentation stay off `PATH`.
+| Dependency | Used for | Without it |
+| --- | --- | --- |
+| [agent-command-guards](https://github.com/osteele/agent-command-guards), checked out beside this repository | The command guards each session runs under | Every launch warns that the session runs unguarded. Set `AGENT_COMMAND_GUARDS_DIR` to its `shadows/` directory if it lives elsewhere. |
+| Python 3.11+ | `launchers/agent-model` | Model-first commands and resume resolution fail |
+| [agent-loom](https://github.com/osteele/agent-loom) | Session names, for receipts and resume by name | Receipts and resume fall back to native IDs |
+| AgentsView | Resume by transcript text; cross-harness continuation | Only exact IDs and names resolve |
+| claude-wrapper | Claude Code's equivalent launcher | Claude Code launches are outside this repository |
 
 ## Installation
-
-`shadows/` belongs on `PATH` inside an agent session only. In an ordinary shell it
-shadows `uv` for every command the user runs, which floods tools that invoke
-`uv run` once per file. `jj fix` is the usual casualty.
-
-Each agent gets there through its own launcher:
-
-| Agent | Launcher |
-| --- | --- |
-| Claude Code | `claude-wrapper`, via its `prepend_path` setting |
-| Codex, kimi, opencode, OMP | `agent-launcher` in this repository (see below) |
-
-Confirm inside a session that the guards win the lookup:
-
-```bash
-command -v git   # want …/agent-command-guards/shadows/git, not /usr/bin/git
-```
-
-Being on `PATH` is not enough, and the two ways it falls short are both silent. A
-`prepend_path` value written in tilde form (`~/code/...`) enters `PATH` literally
-and never expands. A value that does expand can still land behind `/usr/bin`,
-because an agent that re-sources shell configuration for its shell tool lets mise,
-pixi, and other version managers prepend themselves afterwards. Either way every
-command resolves to the system binary while the directory still appears in `PATH`,
-so `command -v` is the only check that means anything.
-
-`launchers/setup` handles the second case. It writes
-`~/.config/agent-launchers/env`, sourced from a managed block at the end of
-`.zshenv`, `.zshrc`, and `.bashrc`, which moves the guards directory back to the
-front whenever it is already on `PATH`. An ordinary shell has no guards directory
-on `PATH`, so the block does nothing there.
-
-## Agent launchers
 
 `agent-launcher` is a generic launcher invoked through a symlink named for the
 agent it starts. The symlink name selects the real binary to resolve and whether
@@ -70,9 +35,10 @@ that agent needs the Zsh bridge; the rest is shared.
 
 Setup links `~/bin/kimi`, `~/bin/opencode`, `~/bin/codex`, and `~/bin/omp` to the launchers,
 and adds a managed block to `~/.zshenv`, `~/.zshrc`, and `~/.bashrc` that prepends
-`launchers/` to `PATH` and restores the guards to the front of it. That
-subdirectory holds only the launchers, so making it globally visible does not make
-the command shadows globally visible. Verify with:
+`launchers/` to `PATH` and, inside an agent session, restores the guards to the
+front of it. That subdirectory holds only the launchers, so making it globally
+visible makes nothing else a command. Setup warns when it cannot find the guards
+beside this checkout or at `AGENT_COMMAND_GUARDS_DIR`. Verify with:
 
 ```bash
 kimi wrapper doctor
@@ -85,7 +51,7 @@ Adding another agent takes a symlink in `launchers/` plus, if its installer puts
 the binary somewhere a login shell would not find, an entry in the launcher's
 `fallback_candidates`.
 
-### Model-first interactive commands
+## Model-first interactive commands
 
 `launchers/agent-model` lets an interactive shell select a model first and a
 harness second. Source `shell/agent-models.sh` from the interactive shell setup
@@ -207,7 +173,7 @@ The shipped OMP routes select Claude Opus 5.5 for `claude` and GPT-6 Astra for
 interactive `codex` launches. Native Claude model defaults come from the
 selected `claude-wrapper` profile.
 
-### Continuing in a fresh conversation
+## Continuing in a fresh conversation
 
 `--from` starts a fresh native conversation in the selected destination harness
 while keeping the source session's Loom identity, name, mail state, and
@@ -291,7 +257,7 @@ Process-owned claims and work leases require their own recovery or transfer.
 Live or unverifiable predecessors, failed exports, incompatible Loom versions,
 and competing takeovers stop the launch.
 
-### CPU priority
+## CPU priority
 
 The launcher starts the agent under `nice -n 5`, which the agent's whole process
 tree inherits. Niceness only arbitrates contention — an otherwise-idle machine
@@ -299,14 +265,14 @@ runs the agent at full speed — so delegated work yields to interactive use and
 costs nothing the rest of the time. Set `AGENT_LAUNCHER_NICE` to change the
 value (`0` disables).
 
-### Codex open-file limit
+## Codex open-file limit
 
 Codex loads skills concurrently. Its current loader can exceed macOS's default
 soft limit of 256 file descriptors and then skip valid skills with `Too many
 open files (os error 24)`. The Codex launcher raises a lower inherited soft
 limit to 65,536 before starting the binary. It leaves the hard limit unchanged.
 
-### Session identity
+## Session identity
 
 The launcher exports `AGENT_SESSION_ID`, a fresh id per launch, and unsets
 `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` first.
@@ -332,7 +298,7 @@ lists sessions under canonical ids (`omp:<uuid>`, `codex:<uuid>`,
 `antigravity-cli:<uuid>`) that the agents themselves do not resolve, so the
 launcher strips its own agent's prefix from a pasted id before exec.
 
-### Provider credentials
+## Provider credentials
 
 The launcher unsets `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` before starting
 `omp`. Set `AGENT_LAUNCHER_KEEP_API_KEYS=1` to keep them.
@@ -354,7 +320,7 @@ available key bills the GLM coding plan, so a key there *is* the subscription.
 The unset covers `omp` alone. The other launched agents authenticate elsewhere
 and have no reason to lose the keys.
 
-### The Zsh bridge
+## The Zsh bridge
 
 `launchers/shell-init` is a private `ZDOTDIR` whose startup files source the
 user's own configuration and then restore the shadow directory to the front of
@@ -368,7 +334,7 @@ tool, because doing so puts mise's `uv` shim back ahead of the shadows.
 
 The bridge covers Zsh only. An agent that snapshots Bash would need its own.
 
-### Exit receipts
+## Exit receipts
 
 These agents render on the alternate screen, so exiting restores a scrollback
 with no sign of which session just ended. After a launched agent exits, the next
@@ -406,210 +372,20 @@ The reader is a Zsh `precmd` hook installed by `launchers/setup` into
 `~/.config/agent-launchers/env`. Bash gets no receipt: there is no equivalent
 hook that can run after the prompt captures its status without displacing it.
 
-## Commands
-
-### ssh, scp, rsync
-
-Python wrappers, all three symlinks to `shadow_wrapper.py`, that check
-connectivity to a managed host before connecting. The managed hosts are `alpha`,
-`beta`, and `gamma`; any other target passes straight through with no probe.
-
-```bash
-ssh beta                        # connects normally when beta is reachable
-scp file.txt alpha:/path/dest    # asks first when alpha is unreachable
-rsync -av local/ gamma:/remote/ # probes before syncing
-```
-
-The wrapper parses the arguments for target hosts, probes a managed one with
-`ssh -o ConnectTimeout=3 -o BatchMode=yes <host> echo ok`, and proceeds when the
-host answers. When it does not answer, a macOS dialog asks whether to continue.
-"Yes" proceeds, on the assumption the user is about to change networks. "No"
-prints an error and exits.
-
-Concurrent requests for the same unreachable host share one outstanding dialog
-and its answer. A caller without its own dialog can join an existing one.
-Approval applies to that group; a later request probes and asks again if needed.
-A missing, failed, or timed-out dialog refuses the command without recording a
-user decline.
-
-A "No" is remembered per host, so a second attempt fails immediately instead of
-asking again. The decision is cleared as soon as a probe succeeds. A host that was
-reachable and no longer is gets a fresh dialog rather than the remembered answer,
-since that pattern indicates a network change rather than a standing decision.
-
-State lives in `~/.cache/agent-command-guards/state.json`, written under a
-process-shared file lock:
-
-```json
-{
-  "beta": {
-    "declined": false,
-    "last_checked": "2025-12-30T14:23:51.657123+00:00",
-    "was_accessible": true,
-    "pending_confirmation": null
-  }
-}
-```
-
-Outstanding dialogs also use temporary per-host confirmation files in that
-directory. An abandoned owner releases its waiting callers with an unavailable
-result.
-
-### git
-
-A Bash wrapper for projects that use both Git and
-[Jujutsu](https://github.com/martinvonz/jj). In a co-located repository it uses
-an explicit compatibility whitelist: known read-only Git commands and the
-translations below are supported, while every unclassified Git command is
-refused with a reminder to use `jj`. Commands outside jj repositories continue
-to use Git normally.
-
-A Git command is allowed when it works correctly in a co-located repository:
-it mutates nothing, and it either reads no state jj could have left stale or
-reads that state only after jj synchronizes it.
-
-Read-oriented commands such as `git log`, `git status`, and read-only branch
-inspection get real jj state: the wrapper first asks jj to snapshot and
-synchronize the co-located working copy. jj keeps Git's `HEAD` detached at the
-working-copy parent, so `git log` and `git status` describe the repository as jj
-sees it rather than stale Git state, without creating a synthetic jj bookmark.
-
-`git remote` inspection (bare, `-v`, `show`, `get-url`) and `git version` run
-directly, without that synchronization: remotes live in `.git/config`, which jj
-reads and writes itself, so Git's view of them is never stale.
-
-Mutating branch and remote forms and commands such as `git checkout`,
-`git reset`, and `git clean` are refused instead of falling through to Git.
-A synchronization failure prevents the Git read from running against stale state.
-
-`git add` succeeds without staging; jj tracks the working copy. `git commit`
-maps to `jj commit`, while `git commit --amend` describes the current jj change.
-Supply `-m` for either form to avoid opening an editor. Git-only commit flags
-are omitted, and message text remains literal even when it spells an option.
-
-`git worktree` add, list, remove, and prune map to the corresponding `jj
-workspace` operations. Removal resolves the exact registered workspace path and
-refuses to touch the primary workspace, the current one, a symlink, or a path that
-is merely similar. These target checks apply even with `-f`, including a symlink
-with a trailing directory separator. Changes, untracked files, and ignored
-files prevent removal unless `-f` is supplied.
-
-### jj
-
-`jj git fetch` and `jj git push` run `git fetch` and `git push` against the
-co-located repository, and those reach the `git` shadow, which refuses both. The
-`jj` shadow lets them through: it exports `AGENT_COMMAND_GUARDS_JJ_PID` set to its
-own process ID and then `exec`s the real jj, so that ID becomes jj's. The `git`
-shadow passes a command straight to Git, without snapshotting or refusing, only
-when that variable names its parent process. This covers aliases that expand to
-`jj git push`, since the shadow marks every jj command rather than parsing for
-`git`.
-
-The `jj` shadow refuses commands that would open an editor or interactive UI,
-including `commit` without a message, `split` without a message and filesets,
-and `squash` without a message when both descriptions are nonempty or the
-source revset selects multiple commits. It checks arguments at the executable
-boundary, so the refusal also applies in agent hosts without a pre-tool hook.
-Pass `-m`, use `squash -u`, or specify a non-interactive alternative. Call the
-real jj binary explicitly when an interactive editor is intentional.
-
-A `git push` an agent runs itself has a different parent and is still refused.
-So is Git run through `jj util exec`: the `jj` shadow does not mark `util`
-commands and removes any marker it inherits. The check is on the parent alone,
-so any Git that a marked jj starts directly passes: a pager, editor, or diff,
-merge, or fix tool configured as `git`, and a user alias that expands to
-`util exec`, which the shadow cannot see through. The marker is a way to recognize
-jj's own subprocesses, not a security boundary; a process that sets it by hand
-can get past the `git` shadow, as it could by calling `/usr/bin/git` directly.
-
-The marker exists only when jj is found on `PATH`. A jj invoked by absolute path
-gets no marker, and its pushes are refused.
-
-### uv, just, and with-limits
-
-The `uv` shadow passes ordinary uv subcommands through unchanged. It runs `uv run`
-under `with-limits`, which watches the resident memory of the whole process tree and
-terminates only its own process group on reaching the limit.
-
-`with-limits` accepts either an argument-vector command after `--` or a shell command
-with `-c` (short for `-- /bin/zsh -c`):
-
-```bash
-with-limits -- uv run python experiment.py
-with-limits -c 'just format && uv run python -m unittest && just check'
-```
-
-`with-limits` is the crates.io crate: `cargo install with-limits`. It replaced a
-Python guard that shipped in this repo's `shadows/` until 2026-09-09; the
-`ram-guard` compatibility alias went with it.
-
-The default ceiling is 70% of the memory the host reports as available at launch.
-The remaining 30%, plus everything already in use by the rest of the system, stays
-outside the new tree's budget. The snapshot is taken immediately before launch and
-cannot reserve memory against unrelated processes that grow later.
-
-| Variable | Effect |
-| --- | --- |
-| `--memory 8G` | A fixed limit, replacing the dynamic calculation (was `LLM_RAM_GUARD_LIMIT`) |
-| `--quiet` | Suppress the startup banner (was `LLM_RAM_GUARD_QUIET`) |
-| `LLM_RAM_GUARD=off` | Skip the guard for one invocation; read by the shadow and the hook, not by the guard |
-| `LLM_MPS_HIGH_WATERMARK_RATIO` | PyTorch MPS hard watermark (default `0.7`) |
-| `LLM_MPS_LOW_WATERMARK_RATIO` | PyTorch MPS soft watermark (default `0.6`) |
-
-`PYTORCH_MPS_HIGH_WATERMARK_RATIO` and `PYTORCH_MPS_LOW_WATERMARK_RATIO` already
-in the environment take precedence over the defaults set here.
-
-```bash
-LLM_RAM_GUARD=off uv run python large-intentional-job.py
-```
-
-The chosen ceiling is announced at startup only when stderr is a terminal, so
-tools that capture stderr per invocation are not flooded. `jj fix` runs a
-formatter once per file per revision and would otherwise produce a banner each
-time.
-
-Memory comes from `memory_pressure -Q` on macOS and from `MemAvailable` in
-`/proc/meminfo` on Linux. The guard enforces aggregate process-tree RSS wherever
-process inspection is permitted, and falls back to an available-memory floor in
-sandboxes that block it.
-
-The shared pre-tool hook in agent-tool-policy wraps `uv run` and `just` by
-rewriting the complete shell request to a `with-limits` invocation. For
-`uv run`, this also covers absolute paths and `mise`/`command` prefixes, which
-never consult `PATH` and so never reach the `uv` shadow.
-
-## How the wrappers find the real binary
-
-Each wrapper has to locate the command it shadows without re-executing itself.
-`shadow_wrapper.py` and `git` scan `which -a <name>` and skip any candidate whose
-`realpath()` matches their own. `uv` walks `PATH` by hand instead, because it also
-has to skip mise shims: a shim ahead of the concrete `uv` binary hangs or recurses
-when this shadow comes earlier on `PATH`. `jj` also walks `PATH` by hand, skipping
-any candidate that is the same file as itself (`-ef`), which sees through symlinks
-without starting another process; it runs before every jj command, including the
-ones jj's own tooling issues.
-
-Handoff uses `exec`, which preserves exit codes and signal behavior. `with-limits`
-is the deliberate exception, staying resident to monitor its child.
-
 ## Tests
 
 ```bash
 python3 -m unittest          # from the repository root
 ```
 
-The suite uses `unittest`. It drives the real wrappers as subprocesses against
-temporary repositories and fake binaries, so it exercises the files that agents
-actually run.
+The suite uses `unittest`. It drives the real launchers as subprocesses against
+temporary homes and fake agent binaries, and stands in for the command guards
+with stubs under `tests/fixtures/guards`, so it runs without
+agent-command-guards installed.
 
-The policies are specified in [`agent-launch.allium`](specs/agent-launch.allium)
-and [`command-guards.allium`](specs/command-guards.allium). Regression test
-docstrings identify the rules and invariants they exercise. Terminal tests cover
-selection, cancellation, and shell status preservation; controlled dialog
-subprocesses exercise shared answers and owner failure across concurrent callers.
+The launch and resume policies are specified in
+[`agent-launch.allium`](specs/agent-launch.allium). Regression test docstrings
+identify the rules and invariants they exercise.
 
-CI runs it on Linux, macOS, and Windows across Python 3.11–3.14. Windows runs
-the portable parser, state, and configuration tests; suites that
-need POSIX shells, terminal emulation, `which(1)`, process groups, or memory monitors skip there
-with their reason. Linux and macOS jobs install `jj` from its latest release so
-the git-shadow tests run against a real repository backend.
+CI runs it on Linux, macOS, and Windows across Python 3.11–3.14. Suites that
+need POSIX shells or terminal emulation skip on Windows with their reason.

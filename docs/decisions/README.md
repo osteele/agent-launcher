@@ -4,9 +4,9 @@ Numbered records of decisions that constrain this repository, each stating one
 decision, the forces behind it, the alternatives rejected, and what it costs.
 Consult these before changing what they constrain.
 
-Every file here is on `PATH`-adjacent territory: a wrapper that misbehaves
-breaks the tool calls of every live agent session, which is why several of the
-decisions below are deliberate absences rather than features.
+The launcher sits in front of every agent session started from a shell, so
+a decision that looks like an oversight here can misroute a resume or start a
+session unguarded.
 
 ## The gate
 
@@ -43,8 +43,6 @@ correction. For how the wrappers behave today, read `README.md`.
 
 ## Records
 
-| # | Decision | Adopted |
-| --- | --- | --- |
-| [0001](0001-git-shadow-fails-closed.md) | The git shadow refuses unclassified subcommands | 2026-09-04 |
+No numbered records yet.
 
 Decisions recorded at the lighter tier are in [log.md](log.md).

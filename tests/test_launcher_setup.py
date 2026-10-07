@@ -11,14 +11,17 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 LAUNCHER_DIR = REPO / "launchers"
 SETUP = LAUNCHER_DIR / "setup"
-SHADOWS = REPO / "shadows"
+# Stand-ins for the agent-command-guards shadows, which live in their own
+# repository: the launcher only checks that git is executable and puts the
+# directory on PATH.
+SHADOWS = REPO / "tests" / "fixtures" / "guards"
 AGENTS = ("kimi", "opencode", "codex", "omp", "agy")
 RC_FILES = (".zshenv", ".zshrc", ".bashrc")
 BLOCK_START = "# >>> agent-launchers initialize >>>"
 BLOCK_END = "# <<< agent-launchers initialize <<<"
 BLOCK_SOLUTION = (
     "Agent launchers are not configured; run "
-    "~/code/agent-tools/agent-command-guards/launchers/setup"
+    "~/code/agent-tools/agent-launcher/launchers/setup"
 )
 
 requires_posix = unittest.skipIf(
@@ -158,7 +161,7 @@ class LauncherSetupTest(unittest.TestCase):
                 file.write(
                     f"\n{BLOCK_START}\n"
                     "# !! Contents within this block are managed by "
-                    "agent-command-guards/launchers/setup !!\n"
+                    "agent-launcher/launchers/setup !!\n"
                     '. "$HOME/.config/agent-launchers/env"\n'
                     f"{BLOCK_END}\n"
                 )

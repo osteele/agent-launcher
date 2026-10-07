@@ -14,7 +14,7 @@
 autoload -Uz add-zsh-hook
 
 typeset -g _AGENT_LAUNCHER_DIR="${${(%):-%x}:A:h:h}/launchers"
-typeset -g _AGENT_GUARDS_DEFAULT_DIR="${${(%):-%x}:A:h:h}/shadows"
+typeset -g _AGENT_GUARDS_DEFAULT_DIR="${${(%):-%x}:A:h:h:h}/agent-command-guards/shadows"
 
 _agent_path_order() {
   # The guards go first, and only when an agent session already put them on

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Test stand-in for the agent-command-guards uv shadow.
+exit 0
