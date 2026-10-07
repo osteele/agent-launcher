@@ -553,9 +553,11 @@ surface CrossHarnessContinuation {
 }
 
 
--- Recovery of a Claude conversation whose host process died without ending its
--- Loom run. Authority: request relayed from the agent-config session,
--- 2026-10-07; transport is agent-loom's `continuation unended` listing.
+-- Recovery of a conversation whose host process died without ending its Loom
+-- run, for the harnesses Loom tracks runs for (Claude, Codex, OMP). Authority:
+-- request relayed from the agent-config session, 2026-10-07, extended to every
+-- tracked harness by the user the same day; transport is agent-loom's
+-- `continuation unended` listing.
 
 external entity RecoveryRequest {
     launch: LaunchRequest
@@ -629,10 +631,16 @@ surface SessionRecovery {
         -- match exactly one, or recovery is refused with the candidates listed.
 
     @guarantee IdentityByResume
-        -- The chosen conversation is resumed by its native ID through the
-        -- launcher's ordinary resume fence, so it keeps its Loom identity.
+        -- The chosen conversation is resumed by its native ID, in its
+        -- harness's own resume spelling, through the launcher's ordinary
+        -- resume fence, so it keeps its Loom identity.
+
+    @guarantee HarnessOfRecovery
+        -- A model-first command recovers in its model's own harness unless a
+        -- harness is named; its configured default does not apply.
 
     @guarantee ContinueNotice
-        -- Before a --continue launch, a dead conversation that --continue will
-        -- not reopen is named in one line; --continue keeps its native meaning.
+        -- Before a Claude or OMP --continue launch, a dead conversation that
+        -- --continue will not reopen is named in one line; --continue keeps its
+        -- native meaning.
 }

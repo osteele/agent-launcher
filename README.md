@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/osteele/agent-launcher/actions/workflows/ci.yml/badge.svg)](https://github.com/osteele/agent-launcher/actions/workflows/ci.yml)
 
-Launchers for the kimi, opencode, codex, OMP, and agy coding-agent CLIs. Each
+Launchers for the claude, kimi, opencode, codex, OMP, and agy coding-agent CLIs. Each
 launcher finds the real binary, puts the
 [agent-command-guards](https://github.com/osteele/agent-command-guards) shadows at
 the front of `PATH` for the session, gives the session a stable identity, and
@@ -19,7 +19,7 @@ services:
 | Python 3.11+ | `launchers/agent-model` | Model-first commands and resume resolution fail |
 | [agent-loom](https://github.com/osteele/agent-loom) | Session names, for receipts and resume by name | Receipts and resume fall back to native IDs |
 | AgentsView | Resume by transcript text; cross-harness continuation | Only exact IDs and names resolve |
-| claude-wrapper | Claude Code's equivalent launcher | Claude Code launches are outside this repository |
+| claude-wrapper | Claude's profiles, providers, proxy, and receipt, behind `launchers/claude` | `launchers/claude` execs the native Claude binary directly |
 
 ## Installation
 
@@ -33,19 +33,41 @@ that agent needs the Zsh bridge; the rest is shared.
 ./launchers/setup --uninstall
 ```
 
-Setup links `~/bin/kimi`, `~/bin/opencode`, `~/bin/codex`, and `~/bin/omp` to the launchers,
-and adds a managed block to `~/.zshenv`, `~/.zshrc`, and `~/.bashrc` that prepends
+Setup links `~/bin/kimi`, `~/bin/opencode`, `~/bin/codex`, `~/bin/omp`, and
+`~/bin/agy` to the launchers, and adds a managed block to `~/.zshenv`, `~/.zshrc`, and `~/.bashrc` that prepends
 `launchers/` to `PATH` and, inside an agent session, restores the guards to the
 front of it. That subdirectory holds only the launchers, so making it globally
 visible makes nothing else a command. Setup warns when it cannot find the guards
 beside this checkout or at `AGENT_COMMAND_GUARDS_DIR`. Verify with:
 
 ```bash
-kimi wrapper doctor
-opencode wrapper doctor
-codex wrapper doctor
-omp wrapper doctor
+claude launcher doctor
+kimi launcher doctor
+omp launcher doctor
 ```
+
+`<agent> launcher doctor` and `<agent> launcher path` work for every launcher.
+`<agent> wrapper doctor` is the same check for every agent except `claude`, where
+`wrapper` belongs to claude-wrapper's own subcommands.
+
+### Claude and claude-wrapper
+
+`launchers/claude` comes first on `PATH` and execs the next `claude`, which is
+usually claude-wrapper; the wrapper execs the native binary. Every layer execs,
+so Claude still runs as a direct child of the shell. The launcher supplies what
+every harness shares — the guards, identity, `--from`, `--recover`, resume by
+name, the `--continue` notice — and the wrapper supplies profiles, providers, the
+proxy, extra arguments, the resume fence (which needs those final arguments), and
+Claude's exit receipt.
+
+The two find each other through `PATH` alone. The launcher takes the first
+`claude` that is not itself; the wrapper takes the first `claude` after itself.
+Each detects being re-entered in the same process, so a `PATH` that puts the
+wrapper first still runs each layer once. When the launcher needs the native
+binary for Loom, it reads the first 4 KB of the next `claude` for the line
+`# agent-launcher-protocol: native-binary` and, finding it, asks that layer
+`claude wrapper native-binary`. Setup does not link `~/bin/claude`: a second
+launcher entry on `PATH` could hand a launch back to the wrapper it came from.
 
 Adding another agent takes a symlink in `launchers/` plus, if its installer puts
 the binary somewhere a login shell would not find, an entry in the launcher's
@@ -165,8 +187,8 @@ agent-model doctor
 ```
 
 Every command ships defaulting to OMP. The native Claude routes resolve `claude`
-through `PATH`, so an installed `claude-wrapper` remains responsible for profiles
-and command guards. The OMP routes use provider-qualified model selectors for
+through `PATH`, so they reach `launchers/claude` and then claude-wrapper's
+profiles. The OMP routes use provider-qualified model selectors for
 Anthropic, Fable, Codex, Kimi Code, and the Z.AI coding plan.
 
 The shipped OMP routes select Claude Opus 5.5 for `claude` and GPT-6 Astra for
@@ -259,10 +281,10 @@ and competing takeovers stop the launch.
 
 ## Recovering a session that died
 
-A Claude session whose process died — killed, crashed, or taken down by Claude
-Code's idle compaction — never ends its Loom run. `claude --continue` does not
-find it reliably: it reopens the newest transcript in the directory, which is
-often a later session. `--recover` reopens the dead one:
+A session whose process died — killed, crashed, or taken down by Claude Code's
+idle compaction — never ends its Loom run. `--continue` does not find it
+reliably: it reopens the newest transcript in the directory, which is often a
+later session. `--recover` reopens the dead one, for Claude, Codex, and OMP:
 
 ```bash
 claude --recover                        # the one session here that died without exiting
@@ -272,8 +294,9 @@ claude --recover="Swift Banjo"          # choose by Loom name, Loom ID, or nativ
 
 The candidates are the runs `agent-loom continuation unended` lists for the
 current directory: each identity's current run, never ended, whose host process
-is gone. A run whose transcript is missing is named and skipped. With one
-candidate, the launcher resumes it as `claude --resume <native ID>` with the
+is gone. A run whose transcript is missing from its harness's own store is named
+and skipped. With one candidate, the launcher resumes it with its harness's own
+spelling (`claude --resume <ID>`, `omp --resume <ID>`, `codex resume <ID>`) and the
 remaining arguments, through the ordinary resume fence, so the conversation keeps
 its Loom identity and name. Several candidates prompt on a terminal and are
 refused unattended until `--recover=` names one. None is an error; recovery never
@@ -281,15 +304,16 @@ falls back to `--continue`. It cannot be combined with `--resume`, `--continue`,
 `--from`, `--fork-session`, or `--session-id`, and a process scan that Loom
 cannot trust refuses rather than reporting no candidates.
 
-The Claude wrapper routes `--recover` here. Recovery covers Claude only, so the
-model-first `claude` function sends it to Claude even when its configured default
-is another harness; `--harness` naming another harness is refused. A forwarded
-`--cd DIR` selects that directory's sessions instead of the current one's.
+The `claude`, `codex`, and `omp` launchers route `--recover` here before
+anything else runs. A model-first command recovers in its model's own harness
+(`claude --recover` recovers Claude sessions even though `claude` defaults to OMP)
+unless `--harness` names another; a harness Loom does not track is refused. A
+forwarded `--cd DIR` selects that directory's sessions instead of the current
+one's.
 
-`agent-model notice-unended claude -- ARGV` prints one line before a
-`--continue` launch when a session that died here is not the one `--continue`
-will reopen. It does nothing without `--continue`, so it adds no lookup to an
-ordinary launch.
+Before a `claude` or `omp` launch with `--continue`, the launcher prints one line
+when a session that died here is not the one `--continue` will reopen. Launches
+without `--continue` make no lookup.
 
 ## CPU priority
 
@@ -396,8 +420,8 @@ The shell consumes each card once and preserves the command and pipeline statuse
 Both input and output must be terminals. Headless, diagnostic, nested, and
 control-subcommand launches (`omp auth-broker`, `codex login`, `agy update`)
 write no card, so they cannot overwrite an outer interactive session's
-receipt. Claude Code's separate wrapper owns its receipt, including when a
-resume request switches to Claude.
+receipt. `launchers/claude` writes no card: claude-wrapper's `SessionEnd` hook
+owns Claude's receipt, including when a resume request switches to Claude.
 
 Set `AGENT_EPILOGUE_DIR` to move the card directory
 (default `~/.cache/agent-command-guards/epilogue`).

@@ -900,6 +900,136 @@ class AgentLauncherTest(unittest.TestCase):
         self.assertIn("args=wrapper install", result.stdout)
 
 
+# A stand-in for claude-wrapper: it does its setup once per process, then execs
+# the first `claude` on PATH after itself, as the real wrapper does, and
+# answers the native-binary query the launcher may ask it.
+FAKE_CLAUDE_WRAPPER = """#!/bin/bash
+# agent-launcher-protocol: native-binary
+self="$(realpath "$0")"
+next_claude() {
+    local seen=false candidate
+    while IFS= read -r candidate; do
+        if [[ "$(realpath "$candidate")" == "$self" ]]; then seen=true; continue; fi
+        if $seen; then printf '%s\\n' "$candidate"; return 0; fi
+    done < <(which -a claude)
+    return 1
+}
+if [[ "${1:-}" == wrapper && "${2:-}" == native-binary ]]; then
+    printf '%s\\n' "$FAKE_NATIVE_CLAUDE"
+    exit 0
+fi
+if [[ "${1:-}" == wrapper ]]; then
+    printf 'wrapper-subcommand=%s\\n' "${2:-}"
+    exit 0
+fi
+if [[ "${_FAKE_WRAPPER_ACTIVE:-}" != "$$" ]]; then
+    export _FAKE_WRAPPER_ACTIVE=$$
+    printf 'wrapper-setup\\n' >> "$FAKE_WRAPPER_LOG"
+fi
+next="$(next_claude)" || { echo "no claude after the wrapper" >&2; exit 1; }
+exec "$next" "$@"
+"""
+
+
+@requires_posix
+class ClaudeChainTest(unittest.TestCase):
+    """launchers/claude in front of claude-wrapper in front of the native binary."""
+
+    # The launcher fixture without re-running every launcher test under it.
+    tearDown = AgentLauncherTest.tearDown
+    install_real = AgentLauncherTest.install_real
+    launch = AgentLauncherTest.launch
+    install_python = AgentLauncherTest.install_python
+
+    def setUp(self) -> None:
+        AgentLauncherTest.setUp(self)  # type: ignore[arg-type]
+        self.native = self.install_real("claude")
+        self.wrapper_dir = self.tmp / "wrapper"
+        self.wrapper_dir.mkdir()
+        wrapper = self.wrapper_dir / "claude"
+        wrapper.write_text(FAKE_CLAUDE_WRAPPER)
+        wrapper.chmod(0o755)
+        self.wrapper_log = self.tmp / "wrapper.log"
+        self.environment["FAKE_WRAPPER_LOG"] = str(self.wrapper_log)
+        self.environment["FAKE_NATIVE_CLAUDE"] = str(self.native)
+
+    def use_path(self, *directories: Path) -> None:
+        self.environment["PATH"] = ":".join([*map(str, directories), "/usr/bin", "/bin"])
+
+    def wrapper_setups(self) -> int:
+        return self.wrapper_log.read_text().count("wrapper-setup") if self.wrapper_log.exists() else 0
+
+    def test_launcher_then_wrapper_then_native(self) -> None:
+        self.use_path(LAUNCHER_DIR, self.wrapper_dir, self.real_bin)
+        result = self.launch("claude", "-p", "hello")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("args=-p hello", result.stdout)
+        self.assertIn("guards=1", result.stdout)
+        self.assertEqual(self.wrapper_setups(), 1)
+
+    def test_wrapper_first_on_path_does_not_loop(self) -> None:
+        # The wrapper reaches the launcher, which reaches the wrapper again in
+        # the same process; each layer sets up once and the native binary runs.
+        self.use_path(self.wrapper_dir, LAUNCHER_DIR, self.real_bin)
+        result = subprocess.run(
+            [str(self.wrapper_dir / "claude"), "-p", "hello"], capture_output=True,
+            check=False, env=self.environment, stdin=subprocess.DEVNULL, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("args=-p hello"), 1)
+        self.assertIn("guards=1", result.stdout)
+        self.assertEqual(self.wrapper_setups(), 1)
+
+    def test_a_second_launcher_entry_does_not_return_to_the_wrapper(self) -> None:
+        second = self.tmp / "second"
+        second.mkdir()
+        (second / "claude").symlink_to(LAUNCHER)
+        self.use_path(LAUNCHER_DIR, self.wrapper_dir, second, self.real_bin)
+        result = self.launch("claude", "-p", "hello")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("args=-p hello"), 1)
+        self.assertEqual(self.wrapper_setups(), 1)
+
+    def test_wrapper_subcommands_reach_the_wrapper(self) -> None:
+        self.use_path(LAUNCHER_DIR, self.wrapper_dir, self.real_bin)
+        result = self.launch("claude", "wrapper", "doctor")
+        self.assertEqual(result.stdout.strip(), "wrapper-subcommand=doctor")
+        doctor = self.launch("claude", "launcher", "doctor")
+        self.assertIn(f"Real claude: {self.wrapper_dir / 'claude'}", doctor.stdout)
+        self.assertIn(f"Native claude behind it: {self.native}", doctor.stdout)
+
+    def test_recover_is_routed_to_agent_model_before_the_wrapper(self) -> None:
+        self.use_path(LAUNCHER_DIR, self.wrapper_dir, self.real_bin)
+        result = self.launch("claude", "--recover", "--dry-run")
+        # The stand-in Loom answers no unended runs, so recovery refuses.
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("ended without exiting", result.stderr)
+        self.assertEqual(self.wrapper_setups(), 0)
+        self.assertFalse((self.tmp / "executed").exists())
+
+    def test_continue_notice_names_a_session_that_died(self) -> None:
+        dead = "11111111-1111-4111-8111-111111111111"
+        newer = "33333333-3333-4333-8333-333333333333"
+        project = Path.cwd().resolve()
+        transcripts = self.fake_home / ".claude" / "projects" / "-project"
+        transcripts.mkdir(parents=True)
+        (transcripts / f"{dead}.jsonl").write_text("{}\n")
+        os.utime(transcripts / f"{dead}.jsonl", (1, 1))
+        (transcripts / f"{newer}.jsonl").write_text("{}\n")
+        table = json.loads(self.names_table.read_text())
+        table["unended"] = [{
+            "loomId": dead, "name": "Swift Banjo", "harness": "claude", "nativeId": dead,
+            "generation": 1, "runId": "r", "project": str(project),
+            "startedAt": "2026-10-07T01:00:00.000Z", "host": {"pid": 1, "procStart": "x"},
+        }]
+        self.names_table.write_text(json.dumps(table))
+        self.use_path(LAUNCHER_DIR, self.wrapper_dir, self.real_bin)
+        result = self.launch("claude", "--continue")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--continue reopens the newest conversation", result.stderr)
+        self.assertIn("Swift Banjo", result.stderr)
+
+
 @requires_posix
 class ShellBridgeTest(unittest.TestCase):
     def run_bridge_zshenv(self, home: Path) -> subprocess.CompletedProcess[str]:

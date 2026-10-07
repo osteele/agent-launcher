@@ -129,9 +129,35 @@ class RecoverTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.split()[0], "claude")
         self.assertIn("--recover=", result.stdout)
-        refused = self.agent_model("resolve", "claude", "--harness", "omp", "--recover")
+        named = self.agent_model("resolve", "claude", "--harness", "omp", "--recover")
+        self.assertEqual(named.returncode, 0, named.stderr)
+        self.assertEqual(named.stdout.split()[0], "omp")
+        # glm's own harness is opencode, which Loom does not track.
+        refused = self.agent_model("resolve", "glm", "--recover")
         self.assertEqual(refused.returncode, 2)
         self.assertIn("cannot recover", refused.stderr)
+
+    def test_codex_and_omp_resume_in_their_own_spelling(self) -> None:
+        sessions = {
+            "omp": (self.home / ".omp" / "agent" / "sessions" / "-project", f"2026-10-07_{DEAD}.jsonl",
+                    ["--resume", DEAD]),
+            "codex": (self.home / ".codex" / "sessions" / "2026" / "10" / "07",
+                      f"rollout-2026-10-07T01-00-00-{DEAD}.jsonl", ["resume", DEAD]),
+        }
+        for harness, (directory, filename, expected) in sessions.items():
+            with self.subTest(harness=harness):
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / filename).write_text("{}\n")
+                self.table["unended"] = []
+                self.unended(DEAD, "Swift Banjo", transcript=False)
+                self.table["unended"][0]["harness"] = harness  # type: ignore[index]
+                self.table_path.write_text(json.dumps(self.table))
+                result = self.agent_model(
+                    "recover", harness, "--launcher", str(self.launcher),
+                    "--native-binary", "/usr/bin/true", "--", "--recover",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.launched(result), expected)
 
     def test_none_unended_refuses_rather_than_continuing(self) -> None:
         result = self.recover("--recover")

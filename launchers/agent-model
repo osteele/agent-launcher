@@ -35,6 +35,9 @@ HARNESS_FLAGS: dict[str, dict[str, str]] = {
     "omp": {"model": "--model="},
 }
 
+# Harnesses agent-loom lists unended runs for; agent_recovery.RECOVER_HARNESSES.
+RECOVERABLE_HARNESSES = {"claude", "codex", "omp"}
+
 # The model-first commands expose one resume spelling. Each harness receives
 # the spelling from its own CLI instead.
 HARNESS_RESUME_ARGUMENTS: dict[str, tuple[str, ...]] = {
@@ -847,14 +850,16 @@ def resolve(
     explicit, forwarded = parse_harness_option(commands, model, arguments)
     invocation_harness = explicit or defaults_with_sources(commands)[model][0]
     if has_continuation_option(invocation_harness, forwarded, "--recover"):
-        # Recovery reopens a dead Claude conversation, so the configured default
-        # harness cannot apply; only an explicit other harness is an error.
-        if explicit is not None and explicit != "claude":
-            raise ConfigError(f"--recover reopens Claude conversations; {explicit} cannot recover one")
+        # Recovery reopens a dead conversation of one harness. The model's own
+        # harness answers it unless one is named; the configured default is a
+        # preference for new conversations, not a statement about dead ones.
+        harness = explicit or commands[model].home
+        if harness not in RECOVERABLE_HARNESSES:
+            raise ConfigError(f"--recover is not supported for {harness}; it cannot recover a session")
         invocation = resume_model_route(
-            commands, model, "claude", "claude", interactive_invocation("claude", forwarded),
+            commands, model, harness, harness, interactive_invocation(harness, forwarded),
         )
-        return [*invocation, *forwarded], "claude"
+        return [*invocation, *forwarded], harness
     if has_continuation_option(invocation_harness, forwarded):
         # --from fixes the destination. Its parser rejects conflicting native
         # modes before any resume lookup can switch harnesses.

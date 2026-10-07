@@ -8,7 +8,7 @@ newest transcript in the directory, which is often a later session.
 
 Recovery asks Loom for those runs and resumes one by its native ID through the
 launcher, so the ordinary resume fence binds the conversation back to its Loom
-identity.
+identity. Loom lists unended runs for Claude, Codex, and OMP.
 """
 
 from __future__ import annotations
@@ -29,7 +29,21 @@ from agent_continuation import (
     string_value,
 )
 
-RECOVER_HARNESSES = {"claude"}
+# Each harness Loom tracks runs for, with the store that proves a native ID
+# still opens and the arguments that resume it.
+RECOVER_HARNESSES = {"claude", "codex", "omp"}
+TRANSCRIPT_STORES: dict[str, tuple[str, str]] = {
+    "claude": (".claude/projects", "*/{native_id}.jsonl"),
+    "omp": (".omp/agent/sessions", "*/*_{native_id}.jsonl"),
+    "codex": (".codex/sessions", "*/*/*/rollout-*-{native_id}.jsonl"),
+}
+RESUME_ARGUMENTS: dict[str, tuple[str, ...]] = {
+    "claude": ("--resume",),
+    "omp": ("--resume",),
+    "codex": ("resume",),
+}
+# Harnesses whose --continue reopens the newest conversation in the directory.
+CONTINUE_HARNESSES = {"claude", "omp"}
 
 # Each of these chooses the conversation itself; recovery owns that choice.
 RECOVER_CONFLICTS = {
@@ -140,19 +154,27 @@ def effective_project(
         raise ContinuationError(f"project directory does not exist: {project}") from error
 
 
-def claude_transcript(native_id: str) -> Path | None:
-    root = Path.home() / ".claude" / "projects"
+def transcript_path(harness: str, native_id: str) -> Path | None:
+    directory, pattern = TRANSCRIPT_STORES[harness]
+    root = Path.home() / directory
     try:
-        found = [path for path in root.glob(f"*/{native_id}.jsonl") if path.is_file()]
+        found = [path for path in root.glob(pattern.format(native_id=native_id)) if path.is_file()]
     except OSError:
         return None
     return max(found, key=lambda path: path.stat().st_mtime) if found else None
 
 
-def transcript_summary(path: Path) -> tuple[str | None, str | None]:
-    """The transcript's latest generated title and its last turn's timestamp."""
+def transcript_summary(harness: str, path: Path) -> tuple[str | None, str | None]:
+    """The transcript's latest generated title and its last turn's timestamp.
+
+    Only Claude's transcript format is read; the others report the file's
+    modification time as the last turn and carry no title.
+    """
     title: str | None = None
     last_turn: str | None = None
+    if harness != "claude":
+        moment = datetime.fromtimestamp(path.stat().st_mtime)
+        return None, moment.strftime("%Y-%m-%d %H:%M")
     with path.open(encoding="utf-8", errors="replace") as transcript:
         for line in transcript:
             if '"ai-title"' not in line and '"timestamp"' not in line:
@@ -202,12 +224,12 @@ def unended_runs(
     for raw in raw_runs:
         run = object_value(raw, "unended run")
         native_id = string_value(run.get("nativeId"), "unended run native ID")
-        transcript = claude_transcript(native_id)
+        transcript = transcript_path(harness, native_id)
         if transcript is None:
             missing.append(native_id)
             continue
         name = run.get("name")
-        title, last_turn = transcript_summary(transcript)
+        title, last_turn = transcript_summary(harness, transcript)
         runs.append(UnendedRun(
             string_value(run.get("loomId"), "unended run Loom ID"),
             name if isinstance(name, str) and name else None,
@@ -220,17 +242,21 @@ def unended_runs(
     return runs, missing
 
 
-def selected(runs: list[UnendedRun], selector: str | None, project: Path) -> list[UnendedRun]:
+def selected(
+    harness: str, runs: list[UnendedRun], selector: str | None, project: Path
+) -> list[UnendedRun]:
     candidates = runs if selector is None else [run for run in runs if run.selected_by(selector)]
     if not candidates:
         if selector is None:
-            raise ContinuationError(f"no Claude session in {project} ended without exiting")
-        raise ContinuationError(f"no unended Claude session in {project} matches {selector!r}")
+            raise ContinuationError(f"no {harness} session in {project} ended without exiting")
+        raise ContinuationError(f"no unended {harness} session in {project} matches {selector!r}")
     return candidates
 
 
-def choose(runs: list[UnendedRun], selector: str | None, project: Path) -> UnendedRun:
-    candidates = selected(runs, selector, project)
+def choose(
+    harness: str, runs: list[UnendedRun], selector: str | None, project: Path
+) -> UnendedRun:
+    candidates = selected(harness, runs, selector, project)
     if len(candidates) == 1:
         return candidates[0]
     labels = [run.label for run in candidates]
@@ -274,13 +300,13 @@ def recover(arguments: list[str], takes_value: Callable[[str, str], bool]) -> in
     for native_id in missing:
         print(f"agent-model: skipping unended {native_id}: no transcript to resume", file=sys.stderr)
     if request.dry_run:
-        print(f"Unended Claude sessions in {project}:")
-        for run in selected(runs, request.selector, project):
+        print(f"Unended {harness} sessions in {project}:")
+        for run in selected(harness, runs, request.selector, project):
             print(f"  {run.label}")
         return 0
-    run = choose(runs, request.selector, project)
+    run = choose(harness, runs, request.selector, project)
     print(f"agent-model: recovering {run.label}", file=sys.stderr)
-    invocation = [str(launcher), "--resume", run.native_id, *request.arguments]
+    invocation = [str(launcher), *RESUME_ARGUMENTS[harness], run.native_id, *request.arguments]
     os.execv(invocation[0], invocation)
     raise AssertionError("execv returned")
 
@@ -313,7 +339,7 @@ def notice_unended(
     if len(arguments) < 2 or arguments[1] != "--":
         raise ContinuationError("notice-unended requires HARNESS -- ARGV")
     harness, argv = arguments[0], arguments[2:]
-    if harness not in RECOVER_HARNESSES or not continue_requested(harness, argv, takes_value):
+    if harness not in CONTINUE_HARNESSES or not continue_requested(harness, argv, takes_value):
         return
     try:
         runs, _ = unended_runs(

@@ -2,8 +2,10 @@
 #
 # Generic launcher that starts one agent CLI with the command guards active.
 #
-# Invoked through a symlink named for the agent it launches (kimi, opencode,
-# codex, omp).
+# Invoked through a symlink named for the agent it launches (claude, kimi,
+# opencode, codex, omp, agy). For claude, the next `claude` on PATH is usually
+# claude-wrapper, which execs the native binary in turn; every layer execs, so
+# none of them stays resident above the agent.
 # The symlink name selects the real binary to find and whether that agent needs
 # the Zsh bridge; everything else is shared.
 
@@ -88,12 +90,29 @@ resolve_via_mise() {
     printf '%s\n' "$resolved"
 }
 
+# The first candidate that is not this launcher. With `after-self`, only
+# candidates after this launcher's last appearance on PATH count, so a second
+# entry for it cannot lead back to a layer that already ran.
 find_real_binary() {
     local candidate real_candidate mise_bin resolved
+    local candidates=() index start=0
+    [[ "${1:-}" == "after-self" ]] && start=-1
 
     mise_bin="$(mise_bin_realpath)"
 
     while IFS= read -r candidate; do
+        candidates+=("$candidate")
+    done < <(which -a "$NAME" 2>/dev/null)
+    if [[ "$start" -lt 0 ]]; then
+        start=0
+        for index in "${!candidates[@]}"; do
+            real_candidate="$(realpath "${candidates[$index]}" 2>/dev/null || true)"
+            [[ "$real_candidate" == "$SCRIPT_PATH" ]] && start=$((index + 1))
+        done
+    fi
+
+    for ((index = start; index < ${#candidates[@]}; index++)); do
+        candidate="${candidates[$index]}"
         real_candidate="$(realpath "$candidate" 2>/dev/null || true)"
         [[ -n "$real_candidate" ]] || continue
         [[ "$real_candidate" == "$SCRIPT_PATH" ]] && continue
@@ -108,7 +127,7 @@ find_real_binary() {
 
         printf '%s\n' "$candidate"
         return 0
-    done < <(which -a "$NAME" 2>/dev/null)
+    done
 
     while IFS= read -r candidate; do
         [[ -n "$candidate" && -x "$candidate" ]] || continue
@@ -122,6 +141,23 @@ find_real_binary() {
     printf 'Error: Could not find the real %s binary after %s\n' \
         "$NAME" "$SCRIPT_PATH" >&2
     return 1
+}
+
+# The native binary, behind any wrapper layer that execs it. Loom's readiness
+# check runs the binary it is given, so it must not be a layer that starts a
+# proxy or applies a profile. A layer declares that it answers
+# `wrapper native-binary` with a marker line near its top; nothing is executed
+# to find out, because the native binary would take that as a prompt.
+NATIVE_BINARY_MARKER='# agent-launcher-protocol: native-binary'
+
+native_binary() {
+    local candidate
+    candidate="$(find_real_binary)" || return 1
+    if head -c 4096 "$candidate" 2>/dev/null | grep -qxF "$NATIVE_BINARY_MARKER"; then
+        "$candidate" wrapper native-binary
+    else
+        printf '%s\n' "$candidate"
+    fi
 }
 
 prepend_path_once() {
@@ -141,13 +177,17 @@ prepend_path_once() {
 
 doctor() {
     local failed=false
-    local real_binary active
+    local real_binary active native
 
     printf '%s Launcher Health Check\n\n' "$NAME"
     printf 'OK   Launcher: %s\n' "$SCRIPT_PATH"
 
     if real_binary="$(find_real_binary)"; then
         printf 'OK   Real %s: %s\n' "$NAME" "$real_binary"
+        native="$(native_binary 2>/dev/null || true)"
+        if [[ -n "$native" && "$native" != "$real_binary" ]]; then
+            printf 'OK   Native %s behind it: %s\n' "$NAME" "$native"
+        fi
     else
         printf 'FAIL Real %s: not found\n' "$NAME"
         failed=true
@@ -192,7 +232,18 @@ doctor() {
     fi
 }
 
-if [[ "${1:-}" == "wrapper" ]]; then
+# A layer that comes before this launcher on PATH (claude-wrapper, when PATH
+# order puts it first) execs the next `claude`: this launcher, in the same
+# process it already ran in. Starting over would resolve that layer again and
+# loop. Hand straight to whatever follows this launcher instead.
+if [[ "${AGENT_LAUNCHER_ACTIVE:-}" == "$$:$NAME" ]]; then
+    REENTRY_BINARY="$(find_real_binary after-self)" || exit 1
+    exec "$REENTRY_BINARY" "$@"
+fi
+
+# `launcher doctor|path` for every agent; `wrapper doctor|path` too, except for
+# claude, whose wrapper layer has its own `wrapper` subcommands.
+if [[ "${1:-}" == "launcher" || ( "${1:-}" == "wrapper" && "$NAME" != "claude" ) ]]; then
     case "${2:-}" in
         doctor)
             doctor
@@ -276,9 +327,20 @@ for continuation_argument in "$@"; do
     [[ "$continuation_argument" == "--" ]] && break
     case "$continuation_argument" in
         --from|--from=*)
-            continuation_binary="$(find_real_binary)"
+            continuation_binary="$(native_binary)" || exit 1
             exec "$LAUNCHER_DIR/launchers/agent-model" continue "$NAME" \
                 --launcher "$0" --native-binary "$continuation_binary" -- "$@"
+            ;;
+        --recover|--recover=*)
+            # Loom tracks runs for these; for any other agent the spelling is
+            # left to the agent itself.
+            case "$NAME" in
+                claude|codex|omp)
+                    continuation_binary="$(native_binary)" || exit 1
+                    exec "$LAUNCHER_DIR/launchers/agent-model" recover "$NAME" \
+                        --launcher "$0" --native-binary "$continuation_binary" -- "$@"
+                    ;;
+            esac
             ;;
     esac
     if [[ "$continuation_argument" != *=* ]] && argument_takes_value "$continuation_argument"; then
@@ -642,5 +704,30 @@ if [[ "$NESTED_LAUNCH" == false && "$INTERACTIVE_LAUNCH" == true && "$NAME" != "
     fi
 fi
 
+# Before --continue, name a session here that died without ending its run:
+# --continue reopens the newest transcript instead. Advisory, so a missing or
+# failing check adds nothing; the cheap scan keeps Python off other launches.
+if [[ "$NAME" == "claude" || "$NAME" == "omp" ]] &&
+   [[ "${AGENT_COMMAND_GUARDS_CONTINUATION_PID:-}" != "$$" ]]; then
+    for notice_argument in "$@"; do
+        [[ "$notice_argument" == "--" ]] && break
+        if [[ "$notice_argument" == "--continue" || "$notice_argument" == "-c" ]]; then
+            notice_status=0
+            notice="$("$LAUNCHER_DIR/launchers/agent-model" notice-unended "$NAME" -- "$@" \
+                2>&1 >/dev/null)" || notice_status=$?
+            if [[ "$notice_status" -eq 0 && -n "$notice" ]]; then
+                printf '%s\n' "$notice" >&2
+            fi
+            unset notice notice_status
+            break
+        fi
+    done
+    unset notice_argument
+fi
+
 NICENESS="${AGENT_LAUNCHER_NICE:-5}"
+# Marks this process for the reentry check above. Set only now: agent-model's
+# continuation and recovery paths exec this launcher in this same process, and
+# they must run it from the start.
+export AGENT_LAUNCHER_ACTIVE="$$:$NAME"
 exec nice -n "$NICENESS" "$REAL_BINARY" "$@"
