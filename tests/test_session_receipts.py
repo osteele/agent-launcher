@@ -37,6 +37,10 @@ def plain(text: str) -> str:
     return ESCAPE.sub("", text)
 
 
+
+# Receipts are rendered by bash scripts at a zsh prompt; on a Windows runner
+# `bash` is WSL's launcher, which has no distribution to run them in.
+@unittest.skipIf(os.name == "nt", "receipts are rendered by bash scripts")
 class ReceiptTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

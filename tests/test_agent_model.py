@@ -79,6 +79,12 @@ def run_pty(
         os.close(master)
 
 
+
+# These drive agent-model end to end against stand-in harnesses and AgentsView
+# that are shebang scripts, under a HOME that Python ignores on Windows (it reads
+# USERPROFILE). The launcher that calls agent-model is itself bash, so Windows is
+# not a platform it runs on; the parsing and selection units below still run there.
+@unittest.skipIf(os.name == "nt", "drives agent-model through POSIX stand-in executables")
 class AgentModelTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
