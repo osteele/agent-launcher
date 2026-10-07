@@ -195,6 +195,26 @@ class LauncherSetupTest(unittest.TestCase):
             link = self.bin_dir / agent
             self.assertEqual(os.path.realpath(link), str(REPO / "agent-launcher"))
 
+    def test_env_file_keeps_a_guards_override_given_to_setup(self) -> None:
+        # A guards checkout outside the sibling default is named once, at
+        # setup; later shells and the launchers they start must still find it.
+        elsewhere = self.tmp / "elsewhere" / "shadows"
+        self.environment["AGENT_COMMAND_GUARDS_DIR"] = str(elsewhere)
+        self.assertEqual(self.run_setup().returncode, 0)
+        env_file = self.home / ".config" / "agent-launchers" / "env"
+        for inherited, expected in ((None, elsewhere), ("/inherited", "/inherited")):
+            with self.subTest(inherited=inherited):
+                environment = {"HOME": str(self.home), "PATH": "/usr/bin:/bin"}
+                if inherited is not None:
+                    environment["AGENT_COMMAND_GUARDS_DIR"] = inherited
+                result = subprocess.run(
+                    ["/bin/sh", "-c", f'. "{env_file}"; sh -c \'printf "%s" "$AGENT_COMMAND_GUARDS_DIR"\''],
+                    capture_output=True, check=False, env=environment,
+                    stdin=subprocess.DEVNULL, text=True, timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, str(expected))
+
     def test_install_refuses_to_replace_a_foreign_binary(self) -> None:
         self.bin_dir.mkdir(parents=True)
         foreign = self.bin_dir / "opencode"

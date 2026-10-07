@@ -178,6 +178,12 @@ else
 # agent-launchers shell setup (managed by agent-launcher/launchers/setup)
 export PATH="$LAUNCHER_DIR:\$PATH"
 
+# Where the command guards live, as resolved when setup ran, so a checkout
+# outside the sibling default survives into later shells. An inherited value
+# wins: inside an agent session it names the directory the launcher activated.
+: "\${AGENT_COMMAND_GUARDS_DIR:=$SHADOW_DIR}"
+export AGENT_COMMAND_GUARDS_DIR
+
 # agy resolves ahead of the launcher directory and cannot be intercepted by
 # PATH. Its real binary lives in ~/.local/bin, which every login shell here
 # puts at the very front -- ahead of this directory -- so the symlink other

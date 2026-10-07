@@ -15,7 +15,7 @@ services:
 
 | Dependency | Used for | Without it |
 | --- | --- | --- |
-| [agent-command-guards](https://github.com/osteele/agent-command-guards), checked out beside this repository | The command guards each session runs under | Every launch warns that the session runs unguarded. Set `AGENT_COMMAND_GUARDS_DIR` to its `shadows/` directory if it lives elsewhere. |
+| [agent-command-guards](https://github.com/osteele/agent-command-guards), checked out beside this repository | The command guards each session runs under | Every launch warns that the session runs unguarded. If it lives elsewhere, run setup with `AGENT_COMMAND_GUARDS_DIR` set to its `shadows/` directory; setup records it in the shell environment it writes. A launch from a process that never read that environment still looks beside this checkout. |
 | Python 3.11+ | `launchers/agent-model` | Model-first commands and resume resolution fail |
 | [agent-loom](https://github.com/osteele/agent-loom) | Session names, for receipts and resume by name | Receipts and resume fall back to native IDs |
 | AgentsView | Resume by transcript text; cross-harness continuation | Only exact IDs and names resolve |
