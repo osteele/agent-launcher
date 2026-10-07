@@ -901,8 +901,8 @@ class AgentLauncherTest(unittest.TestCase):
 
 
 # A stand-in for claude-wrapper: it does its setup once per process, then execs
-# the first `claude` on PATH after its own last entry, as the real wrapper does,
-# and answers the native-binary query the launcher may ask it.
+# the next `claude` on PATH as the real wrapper does -- after its first entry on
+# a first run, after its last on re-entry -- and answers the native-binary query.
 FAKE_CLAUDE_WRAPPER = """#!/bin/bash
 # agent-launcher-protocol: native-binary
 self="$(realpath "$0")"
@@ -910,7 +910,10 @@ next_claude() {
     local candidates=() candidate index start=-1
     while IFS= read -r candidate; do candidates+=("$candidate"); done < <(which -a claude)
     for index in "${!candidates[@]}"; do
-        [[ "$(realpath "${candidates[$index]}")" == "$self" ]] && start=$index
+        if [[ "$(realpath "${candidates[$index]}")" == "$self" ]] &&
+           { [[ "${1:-}" == after-last ]] || [[ "$start" -lt 0 ]]; }; then
+            start=$index
+        fi
     done
     for ((index = start + 1; index < ${#candidates[@]}; index++)); do
         [[ "$(realpath "${candidates[$index]}")" == "$self" ]] && continue
@@ -926,11 +929,14 @@ if [[ "${1:-}" == wrapper ]]; then
     printf 'wrapper-subcommand=%s\\n' "${2:-}"
     exit 0
 fi
-if [[ "${_FAKE_WRAPPER_ACTIVE:-}" != "$$" ]]; then
+mode=first
+if [[ "${_FAKE_WRAPPER_ACTIVE:-}" == "$$" ]]; then
+    mode=after-last
+else
     export _FAKE_WRAPPER_ACTIVE=$$
     printf 'wrapper-setup\\n' >> "$FAKE_WRAPPER_LOG"
 fi
-next="$(next_claude)" || { echo "no claude after the wrapper" >&2; exit 1; }
+next="$(next_claude "$mode")" || { echo "no claude after the wrapper" >&2; exit 1; }
 exec "$next" "$@"
 """
 
