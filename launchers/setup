@@ -260,8 +260,14 @@ for agent in "${AGENTS[@]}"; do
         printf 'Would link %s to %s/%s\n' "$link" "$LAUNCHER_DIR" "$agent"
         continue
     fi
+    # A link into agent-command-guards is this launcher's previous home, before
+    # it moved to its own repository; it may already dangle. Replace it.
+    if [[ -L "$link" && "$(readlink "$link")" == */agent-command-guards/* ]]; then
+        rm "$link"
+        printf 'Removed %s, which pointed into agent-command-guards\n' "$link"
+    fi
     if [[ -e "$link" || -L "$link" ]]; then
-        if [[ ! -L "$link" || "$(realpath "$link")" != "$LAUNCHER_TARGET" ]]; then
+        if [[ ! -L "$link" || "$(realpath "$link" 2>/dev/null)" != "$LAUNCHER_TARGET" ]]; then
             printf 'Error: Refusing to replace existing %s\n' "$link" >&2
             exit 1
         fi

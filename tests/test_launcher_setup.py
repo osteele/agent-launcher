@@ -178,6 +178,23 @@ class LauncherSetupTest(unittest.TestCase):
             else:
                 self.assertIn(BLOCK_SOLUTION, content)
 
+    def test_install_replaces_links_into_the_previous_repository(self) -> None:
+        # The launchers lived in agent-command-guards before they moved here.
+        # Its links may still resolve, or may already dangle once that
+        # checkout loses its launchers/ directory.
+        self.bin_dir.mkdir()
+        old_root = self.tmp / "agent-command-guards"
+        (old_root / "launchers").mkdir(parents=True)
+        (old_root / "agent-launcher").write_text("#!/bin/sh\n")
+        (old_root / "launchers" / "kimi").symlink_to(old_root / "agent-launcher")
+        (self.bin_dir / "kimi").symlink_to(old_root / "launchers" / "kimi")
+        (self.bin_dir / "codex").symlink_to(old_root / "launchers" / "codex")
+        result = self.run_setup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for agent in ("kimi", "codex"):
+            link = self.bin_dir / agent
+            self.assertEqual(os.path.realpath(link), str(REPO / "agent-launcher"))
+
     def test_install_refuses_to_replace_a_foreign_binary(self) -> None:
         self.bin_dir.mkdir(parents=True)
         foreign = self.bin_dir / "opencode"
